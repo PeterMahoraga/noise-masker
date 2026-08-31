@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Masking Desk v3 — laptop under bed, earplugs in</title>
+<style>
+  :root{
+    --bg:#08090B; --panel:#101216; --panel-2:#15181D; --rule:#22262D;
+    --text:#C8CDD4; --dim:#7A828D; --faint:#4A515B;
+    --base:#6D80A0; --voice:#8E7BB5; --band:#4FB3A6; --tone:#E0A458; --warn:#C96A5A;
+    --mono: ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    --sans: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+       font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;
+       display:flex;justify-content:center;padding:28px 18px 64px}
+  .desk{width:100%;max-width:880px;transition:opacity .9s ease}
+  body.dimmed .desk{opacity:.12}
+  @media (prefers-reduced-motion:reduce){.desk{transition:none}}
+
+  header{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:16px}
+  h1{font-size:22px;font-weight:600;margin:0 0 2px;letter-spacing:-.01em}
+  .sub{color:var(--dim);font-size:13.5px;margin:0;max-width:58ch}
+  .clock{font-family:var(--mono);font-size:12px;color:var(--faint);text-align:right;white-space:nowrap}
+  .clock b{display:block;font-size:19px;font-weight:500;color:var(--dim)}
+
+  .transport{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--panel);
+    border:1px solid var(--rule);border-radius:10px;padding:14px 16px;margin-bottom:12px}
+  button{font:inherit;color:inherit;cursor:pointer}
+  #power{background:var(--panel-2);border:1px solid var(--rule);border-radius:7px;padding:10px 22px;font-weight:600;min-width:112px}
+  #power:hover{border-color:#39414c}
+  #power[data-on="true"]{background:#1B2A26;border-color:#33574f;color:#9FD9CE}
+  .lamp{width:8px;height:8px;border-radius:50%;background:var(--faint);display:inline-block;margin-right:9px;vertical-align:1px}
+  #power[data-on="true"] .lamp{background:var(--band);box-shadow:0 0 8px var(--band)}
+  #listen{background:transparent;border:1px solid var(--rule);border-radius:7px;padding:9px 16px;color:var(--dim)}
+  #listen:hover{color:var(--text);border-color:#39414c}
+  #listen:disabled{opacity:.35;cursor:default}
+  .state{font-family:var(--mono);font-size:12.5px;color:var(--dim)}
+  .spacer{flex:1}
+
+  .presets{display:flex;gap:8px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--rule);
+    border-radius:10px;padding:12px 16px;margin-bottom:12px;align-items:center}
+  .presets span.lbl{font-size:13px;color:var(--dim);margin-right:4px}
+  .presets button{background:var(--panel-2);border:1px solid var(--rule);border-radius:6px;
+    padding:7px 13px;font-size:13.5px;color:var(--dim)}
+  .presets button:hover{color:var(--text);border-color:#39414c}
+
+  .scope{position:relative;background:var(--panel);border:1px solid var(--rule);border-radius:10px;overflow:hidden;margin-bottom:12px}
+  canvas{display:block;width:100%;height:150px}
+  .legend{position:absolute;top:9px;left:12px;font-family:var(--mono);font-size:11px;color:var(--faint);pointer-events:none}
+  .drive{position:absolute;top:9px;right:12px;font-family:var(--mono);font-size:11px;color:var(--faint);pointer-events:none}
+  .drive.hot{color:var(--warn)}
+
+  .strip{background:var(--panel);border:1px solid var(--rule);border-radius:10px;
+    padding:16px 18px;margin-bottom:11px;border-left:3px solid var(--edge,var(--rule))}
+  .strip.a{--edge:var(--base)} .strip.b{--edge:var(--voice)}
+  .strip.c{--edge:var(--band)} .strip.d{--edge:var(--tone)}
+  .strip h2{font-size:15px;font-weight:600;margin:0 0 3px}
+  .strip .what{color:var(--dim);font-size:13px;margin:0 0 13px;max-width:66ch}
+  .what code{font-family:var(--mono);font-size:12px;color:var(--text)}
+
+  ol.setup{margin:0 0 6px;padding-left:20px;color:var(--dim);font-size:13.5px;max-width:70ch}
+  ol.setup li{margin-bottom:7px}
+  ol.setup b{color:var(--text);font-weight:600}
+
+  .row{display:grid;grid-template-columns:150px 1fr 88px;align-items:center;gap:14px;padding:5px 0}
+  .row label{font-size:13.5px;color:var(--dim)}
+  .row output{font-family:var(--mono);font-size:13px;text-align:right;color:var(--text)}
+  select{background:var(--panel-2);border:1px solid var(--rule);color:var(--text);
+    border-radius:6px;padding:7px 9px;font:inherit;font-size:13.5px;width:100%}
+
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:22px;background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--rule);border-radius:2px}
+  input[type=range]::-moz-range-track{height:3px;background:var(--rule);border-radius:2px}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+    background:var(--knob,var(--text));margin-top:-6px;border:none}
+  input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--knob,var(--text));border:none}
+  .strip.a input[type=range]{--knob:var(--base)} .strip.b input[type=range]{--knob:var(--voice)}
+  .strip.c input[type=range]{--knob:var(--band)} .strip.d input[type=range]{--knob:var(--tone)}
+
+  .opts{display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;padding-top:12px;border-top:1px solid var(--rule)}
+  .opt{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--dim)}
+  input[type=checkbox]{accent-color:var(--dim);width:15px;height:15px}
+  .opt input[type=number]{background:var(--panel-2);border:1px solid var(--rule);color:var(--text);
+    border-radius:5px;padding:4px 7px;width:62px;font-family:var(--mono);font-size:13px}
+
+  .note{font-size:12.5px;color:var(--faint);margin:10px 0 0;max-width:70ch}
+  .note.caution{color:var(--warn)}
+  footer{color:var(--faint);font-size:12.5px;margin-top:22px;max-width:74ch}
+  footer p{margin:0 0 8px}
+  :focus-visible{outline:2px solid var(--band);outline-offset:2px;border-radius:4px}
+  @media (max-width:560px){.row{grid-template-columns:1fr;gap:2px;padding:8px 0}.row output{text-align:left}}
+</style>
+</head>
+<body>
+<main class="desk">
+
+<header>
+  <div>
+    <h1>Masking desk</h1>
+    <p class="sub">Tuned for one situation: a source across a hard wall roughly 10–15 m away, a laptop speaker near the bed, and foam earplugs already in.</p>
+  </div>
+  <div class="clock">Running<b id="uptime">00:00:00</b><span id="dose"></span></div>
+</header>
+
+<div class="transport">
+  <button id="power" data-on="false" aria-pressed="false"><span class="lamp"></span>Start</button>
+  <button id="listen" disabled>Listen through (4 s)</button>
+  <span class="state" id="state">Silent — read the setup panel, then start</span>
+  <span class="spacer"></span>
+  <label class="opt"><input type="checkbox" id="showScope" checked> Spectrum</label>
+  <label class="opt"><input type="checkbox" id="autoDim" checked> Dim after 90 s</label>
+</div>
+
+<div class="presets">
+  <span class="lbl">Start from</span>
+  <button data-preset="voices">Voices across the wall</button>
+  <button data-preset="bass">Bass-heavy music</button>
+  <button data-preset="both">Voices + music</button>
+  <button data-preset="whine">High-frequency whine</button>
+  <button data-preset="zero">Reset to silence</button>
+</div>
+
+<div class="scope" id="scope">
+  <canvas id="viz" height="150" aria-hidden="true"></canvas>
+  <div class="legend">20 Hz — 20 kHz · violet band = what still reaches you through earplugs</div>
+  <div class="drive" id="drive"></div>
+</div>
+
+<!-- ================= SETUP ================= -->
+<section class="strip">
+  <h2>Before you set a level</h2>
+  <ol class="setup">
+    <li><b>Move the laptop out from under the bed.</b> A mattress absorbs 500 Hz–4 kHz far more than it absorbs bass, which is exactly the range doing the masking. Under the bed you lose the useful part of the sound and keep the useless part.</li>
+    <li><b>Put the speaker between you and the noise</b>, on the floor near that wall, pointed at your head. When the masker arrives from the same direction as the noise, your brain cannot separate the two by direction, and masking works at a much lower level. A masker at 1 m against a source at 12 m is already a 20 dB head start — use it instead of volume.</li>
+    <li><b>Earplugs in first, then set the level.</b> The plugs attenuate the masker and the noise equally, so they do not need to be overcome. What they do change is that almost nothing above 3 kHz survives them, so only the 200 Hz–2 kHz layers are doing real work.</li>
+    <li><b>Use Listen through</b> to check the room every few minutes while setting up. Stop at the lowest setting that works.</li>
+  </ol>
+  <p class="note caution">If the laptop stays under the bed: keep the vents clear of bedding, put it on a hard surface rather than carpet, and check it is not getting hot. A machine running 24/7 in a restricted space is a real fire risk, not a theoretical one.</p>
+</section>
+
+<!-- ================= OUTPUT ================= -->
+<section class="strip">
+  <h2>Output</h2>
+  <p class="what">Fades in slowly, protects the speaker from frequencies it cannot reproduce, and limits so nothing spikes while you are asleep.</p>
+
+  <div class="row">
+    <label for="spk">Playing through</label>
+    <select id="spk">
+      <option value="220" selected>Laptop speakers</option>
+      <option value="120">Small external speaker</option>
+      <option value="60">Full-range speaker</option>
+    </select>
+    <output id="spkO">220 Hz</output>
+  </div>
+  <div class="row"><label for="mVol">Master volume</label><input type="range" id="mVol" min="0" max="100" value="0" step="1"><output id="mVolO">0</output></div>
+  <div class="row"><label for="midComp">Muffling comp.</label><input type="range" id="midComp" min="0" max="12" value="0" step="0.5"><output id="midCompO">0.0 dB</output></div>
+  <div class="row"><label for="tilt">Tone tilt</label><input type="range" id="tilt" min="-15" max="9" value="-6" step="0.5"><output id="tiltO">−6.0 dB</output></div>
+  <div class="row"><label for="fadeIn">Fade-in</label><input type="range" id="fadeIn" min="0" max="600" value="120" step="10"><output id="fadeInO">2:00</output></div>
+  <div class="opts">
+    <label class="opt"><input type="checkbox" id="autoStopOn"> Auto-stop after <input type="number" id="autoStopHrs" min="1" max="14" value="9" step="1"> h</label>
+    <label class="opt"><input type="checkbox" id="adaptOn"> Adaptive level (uses microphone)</label>
+    <span class="state" id="adaptState"></span>
+  </div>
+  <p class="note">The speaker setting is a <code>24 dB/oct</code> high-pass. Feeding a laptop driver 60 Hz does not produce 60 Hz — it produces excursion, distortion, and a rattling chassis, so that energy is removed before it reaches the amplifier. Muffling compensation is a broad <code>+dB</code> lift around 1.2 kHz, for when the speaker really cannot be moved out from under the mattress.</p>
+</section>
+
+<!-- ================= A ================= -->
+<section class="strip a">
+  <h2>A · Deep rumble</h2>
+  <p class="what">Brownian noise, <code>−6 dB/octave</code>, for the bass that survives 12 m and a hard wall. Honest warning: through laptop speakers most of this layer is inaudible, and the high-pass above will remove what the driver cannot produce anyway. It earns its keep only on a real speaker.</p>
+  <div class="row"><label for="aVol">Level</label><input type="range" id="aVol" min="0" max="100" value="0" step="1"><output id="aVolO">0</output></div>
+  <div class="row"><label for="aTop">Roll-off</label><input type="range" id="aTop" min="120" max="2000" value="700" step="10"><output id="aTopO">700 Hz</output></div>
+</section>
+
+<!-- ================= B ================= -->
+<section class="strip b">
+  <h2>B · Voice mask</h2>
+  <p class="what">Speech-shaped noise: pink, high-passed at 180 Hz, emphasised at the focus frequency, rolled off above 3.5 kHz. This is the layer that actually does the work in your setup — it is the only one sitting in the narrow window where noise still gets past both the wall and the earplugs.</p>
+  <div class="row"><label for="bVol">Level</label><input type="range" id="bVol" min="0" max="100" value="0" step="1"><output id="bVolO">0</output></div>
+  <div class="row"><label for="bFocus">Focus</label><input type="range" id="bFocus" min="250" max="2000" value="700" step="25"><output id="bFocusO">700 Hz</output></div>
+  <div class="opts">
+    <label class="opt"><input type="checkbox" id="wander" checked> Wander — slow drift in level and colour</label>
+  </div>
+  <p class="note">Through a wall at that distance, speech arrives with its consonants stripped off and its energy piled up around 300–900 Hz. Start the focus low. Move it up only if you can still pick out individual words rather than just a murmur.</p>
+</section>
+
+<!-- ================= C ================= -->
+<section class="strip c">
+  <h2>C · High band</h2>
+  <p class="what">Noise held between two movable edges by four cascaded high-pass and four cascaded low-pass stages, about <code>24 dB/octave</code> on each skirt. Kept for a steady electrical whine. Against neighbours it does nothing, and behind earplugs it barely reaches you.</p>
+  <div class="row"><label for="cVol">Level</label><input type="range" id="cVol" min="0" max="100" value="0" step="1"><output id="cVolO">0</output></div>
+  <div class="row"><label for="cLo">Low edge</label><input type="range" id="cLo" min="2000" max="12000" value="8000" step="100"><output id="cLoO">8000 Hz</output></div>
+  <div class="row"><label for="cHi">High edge</label><input type="range" id="cHi" min="4000" max="18000" value="15000" step="100"><output id="cHiO">15000 Hz</output></div>
+</section>
+
+<!-- ================= D ================= -->
+<section class="strip d">
+  <h2>D · Targeted tone</h2>
+  <p class="what">One sine, parked on one frequency. For a transformer or fan whine only.</p>
+  <div class="row"><label for="dVol">Level</label><input type="range" id="dVol" min="0" max="100" value="0" step="1"><output id="dVolO">0</output></div>
+  <div class="row"><label for="dFreq">Frequency</label><input type="range" id="dFreq" min="500" max="15000" value="11000" step="10"><output id="dFreqO">11000 Hz</output></div>
+  <div class="opts"><label class="opt"><input type="checkbox" id="dDrift" checked> Slow drift (±35 cents)</label></div>
+  <p class="note caution">Keep well under the noise layers. A fixed tone is the most fatiguing thing here.</p>
+</section>
+
+<footer>
+  <p>Watch the drive meter on the spectrum. If it sits past a few dB of reduction, the laptop is being pushed into distortion — that distortion is broadband and buzzy, and it will annoy you more than the neighbours do. Turn the master down and raise the module levels instead.</p>
+  <p>Everything runs locally. Nothing is stored, so every session starts from silence on purpose.</p>
+</footer>
+</main>
+
+<script>
+"use strict";
+/* =====================================================================
+   MASKING DESK v3
+   ---------------------------------------------------------------------
+   Scenario this is tuned for:
+     source 10–15 m away, hard non-absorbing wall in between,
+     speaker roughly 1 m from the head, 24 dB foam earplugs worn.
+
+   What that geometry implies, and why the design looks like this:
+
+   • The wall low-passes the noise. Anything above ~2 kHz is already
+     gone before it reaches the room.
+   • The earplugs attenuate the masker and the noise by the same amount,
+     because both are airborne sound arriving at the same ear. They do
+     not need to be "pierced". What they do is remove another 30–40 dB
+     above 3 kHz, so high-frequency masking energy has nothing left to
+     mask and is pure waste.
+   • Net: the only band where masking matters here is roughly
+     200 Hz – 2 kHz. Module B lives there; everything else is optional.
+   • Distance does the heavy lifting. Masker at ~1 m against a source at
+     ~12 m is about a 20 dB advantage before any volume is applied, so
+     the correct operating point is quiet.
+
+   24/7 architecture:
+   • One pre-rendered stereo white-noise buffer, looped by native
+     AudioBufferSourceNodes. White noise loops seamlessly because
+     adjacent samples are already uncorrelated; all shaping happens
+     downstream in filters whose state carries across the loop point.
+   • No ScriptProcessor, no per-sample JS, nothing allocated per block.
+   • Graph built once; all control changes are AudioParam ramps.
+   • Watchdog resumes the context after sleep/wake or a device change.
+   ===================================================================== */
+
+const $ = id => document.getElementById(id);
+const NOISE_SECONDS = 15, FADE = 0.06;
+
+let ctx=null, running=false, startedAt=0, autoStopTimer=null;
+let noiseBuf=null, srcA=null, srcB=null, srcC=null, oscD=null, lfoD=null, lfoDdepth=null;
+let wLfo1=null, wLfo2=null, wDepth1=null, wDepth2=null;
+let gA=null, gB=null, gC=null, gD=null;
+let mUser=null, mEnv=null, mAdapt=null, outHP1=null, outHP2=null, midPeak=null, tiltShelf=null;
+let limiter=null, analyser=null, freqData=null;
+let brownIIR=null, aTrim=null, aLP=null;
+let pinkIIR=null, pinkTrim=null, bHP1=null, bHP2=null, bPeak=null, bShelf=null, bLP=null;
+let cIn=null, cHPs=[], cLPs=[];
+let micStream=null, micAnalyser=null, micData=null, adaptTimer=null;
+
+const fader = (v, ceil) => Math.pow(v/100, 3) * ceil;
+
+function makeNoiseBuffer(ac){
+  const len = Math.floor(ac.sampleRate * NOISE_SECONDS);
+  const buf = ac.createBuffer(2, len, ac.sampleRate);
+  for (let ch=0; ch<2; ch++){
+    const d = buf.getChannelData(ch);
+    for (let i=0;i<len;i++) d[i] = Math.random()*2 - 1;
+  }
+  return buf;
+}
+
+/* ---------------------------------------------------------------------
+   MODULE C BAND — how the 8–15 kHz window is built.
+   A single biquad bandpass over 8–15 kHz needs
+       Q = sqrt(8000·15000)/7000 ≈ 1.56,
+   giving only 12 dB/oct skirts that leak hiss into the mids. Instead:
+       4 × highpass @ lowEdge   → ~24 dB/oct below the band
+       4 × lowpass  @ highEdge  → ~24 dB/oct above the band
+   Each stage Q = 0.7071 (Butterworth). Cascading four identical stages
+   pulls the real −3 dB points inward, so corners are pre-warped by ±6%
+   (WARP) to land the audible edges on the numbers shown in the UI.
+   --------------------------------------------------------------------- */
+const BAND_STAGES = 4, BAND_Q = 0.7071, WARP = 0.94;
+
+function setBandEdges(lo, hi){
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  for (const f of cHPs) f.frequency.setTargetAtTime(lo * WARP, t, 0.02);
+  for (const f of cLPs) f.frequency.setTargetAtTime(hi / WARP, t, 0.02);
+}
+
+function buildGraph(){
+  ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint:"playback" });
+  noiseBuf = makeNoiseBuffer(ctx);
+
+  /* ---- Output stage ----
+     mUser  : master slider
+     mEnv   : fade-in, auto-stop taper, listen-through duck
+     mAdapt : microphone-driven trim (1.0 when adaptive is off)
+     outHP  : speaker protection, 2 biquads = 24 dB/oct
+     midPeak: muffling compensation for an obstructed speaker
+     tilt   : global high shelf, negative by default
+     Separate nodes so nothing ever contends for one AudioParam. */
+  mUser  = ctx.createGain(); mUser.gain.value = 0;
+  mEnv   = ctx.createGain(); mEnv.gain.value  = 0;
+  mAdapt = ctx.createGain(); mAdapt.gain.value = 1;
+
+  const hpF = +$("spk").value;
+  outHP1 = ctx.createBiquadFilter(); outHP1.type="highpass"; outHP1.frequency.value=hpF; outHP1.Q.value=0.7071;
+  outHP2 = ctx.createBiquadFilter(); outHP2.type="highpass"; outHP2.frequency.value=hpF; outHP2.Q.value=0.7071;
+
+  midPeak = ctx.createBiquadFilter(); midPeak.type="peaking";
+  midPeak.frequency.value = 1200; midPeak.Q.value = 0.7; midPeak.gain.value = +$("midComp").value;
+
+  tiltShelf = ctx.createBiquadFilter(); tiltShelf.type="highshelf";
+  tiltShelf.frequency.value = 3000; tiltShelf.gain.value = +$("tilt").value;
+
+  limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value=-6; limiter.knee.value=0; limiter.ratio.value=20;
+  limiter.attack.value=0.003; limiter.release.value=0.25;
+
+  analyser = ctx.createAnalyser();
+  analyser.fftSize=4096; analyser.smoothingTimeConstant=0.82;
+  analyser.minDecibels=-100; analyser.maxDecibels=-12;
+  freqData = new Uint8Array(analyser.frequencyBinCount);
+
+  mUser.connect(mEnv).connect(mAdapt).connect(outHP1).connect(outHP2)
+       .connect(midPeak).connect(tiltShelf).connect(limiter).connect(analyser).connect(ctx.destination);
+
+  /* ---- A: Brownian rumble ----
+     y[n] = 0.02·x[n] + 0.98·y[n−1] — one-pole integrator, the −6 dB/oct
+     slope that defines brown noise. IIR state carries across the buffer
+     loop point, so there is no seam. */
+  brownIIR = ctx.createIIRFilter([0.02, 0], [1, -0.98]);
+  aTrim = ctx.createGain(); aTrim.gain.value = 12;
+  aLP = ctx.createBiquadFilter(); aLP.type="lowpass";
+  aLP.frequency.value = +$("aTop").value; aLP.Q.value=0.7071;
+  gA = ctx.createGain(); gA.gain.value = 0;
+  brownIIR.connect(aTrim).connect(aLP).connect(gA).connect(mUser);
+
+  /* ---- B: speech-shaped noise ----
+     pink (−3 dB/oct) → 2× highpass 180 Hz → peaking at focus (+5 dB,
+     Q 0.9) → highshelf 3.5 kHz −8 dB → lowpass 7 kHz.
+     This approximates the long-term average spectrum of speech.
+     Masking is strongest when the masker sits at or just below the
+     frequency of the target, so keeping the band tight is also what
+     keeps the required level low. */
+  pinkIIR = ctx.createIIRFilter(
+    [0.049922035, -0.095993537, 0.050612699, -0.004408786],
+    [1, -2.494956002, 2.017265875, -0.522189400]
+  );
+  pinkTrim = ctx.createGain(); pinkTrim.gain.value = 3.5;
+  bHP1 = ctx.createBiquadFilter(); bHP1.type="highpass"; bHP1.frequency.value=180; bHP1.Q.value=0.7071;
+  bHP2 = ctx.createBiquadFilter(); bHP2.type="highpass"; bHP2.frequency.value=180; bHP2.Q.value=0.7071;
+  bPeak = ctx.createBiquadFilter(); bPeak.type="peaking";
+  bPeak.frequency.value=+$("bFocus").value; bPeak.Q.value=0.9; bPeak.gain.value=5;
+  bShelf = ctx.createBiquadFilter(); bShelf.type="highshelf"; bShelf.frequency.value=3500; bShelf.gain.value=-8;
+  bLP = ctx.createBiquadFilter(); bLP.type="lowpass"; bLP.frequency.value=7000; bLP.Q.value=0.7071;
+  gB = ctx.createGain(); gB.gain.value = 0;
+  pinkIIR.connect(pinkTrim).connect(bHP1).connect(bHP2).connect(bPeak)
+         .connect(bShelf).connect(bLP).connect(gB).connect(mUser);
+
+  /* ---- Wander ----
+     Two very slow LFOs at incommensurate rates modulate Module B's focus
+     and level. The pattern never audibly repeats, so it reads as air
+     movement rather than a static hiss — which the auditory system is
+     far worse at learning to listen past. */
+  wLfo1 = ctx.createOscillator(); wLfo1.type="sine"; wLfo1.frequency.value=0.031;
+  wDepth1 = ctx.createGain(); wDepth1.gain.value = 0;
+  wLfo1.connect(wDepth1).connect(bPeak.frequency);
+  wLfo2 = ctx.createOscillator(); wLfo2.type="sine"; wLfo2.frequency.value=0.019;
+  wDepth2 = ctx.createGain(); wDepth2.gain.value = 0;
+  wLfo2.connect(wDepth2).connect(gB.gain);
+
+  /* ---- C: movable high band ---- */
+  cIn = ctx.createGain(); cHPs=[]; cLPs=[];
+  let n = cIn;
+  for (let i=0;i<BAND_STAGES;i++){
+    const hp = ctx.createBiquadFilter(); hp.type="highpass"; hp.Q.value=BAND_Q;
+    hp.frequency.value = +$("cLo").value * WARP; cHPs.push(hp); n = n.connect(hp);
+  }
+  for (let i=0;i<BAND_STAGES;i++){
+    const lp = ctx.createBiquadFilter(); lp.type="lowpass"; lp.Q.value=BAND_Q;
+    lp.frequency.value = +$("cHi").value / WARP; cLPs.push(lp); n = n.connect(lp);
+  }
+  gC = ctx.createGain(); gC.gain.value = 0;
+  n.connect(gC).connect(mUser);
+
+  /* ---- D: pure tone ---- */
+  gD = ctx.createGain(); gD.gain.value = 0; gD.connect(mUser);
+}
+
+/* Only source nodes are recreated per start — they are one-shot by spec.
+   The rest of the graph persists, so start/stop never grows it. */
+function startSources(){
+  srcA = ctx.createBufferSource(); srcA.buffer=noiseBuf; srcA.loop=true;
+  srcA.connect(brownIIR); srcA.start(0, 0);
+
+  srcB = ctx.createBufferSource(); srcB.buffer=noiseBuf; srcB.loop=true;
+  srcB.connect(pinkIIR); srcB.start(0, NOISE_SECONDS*0.33);   // offset = decorrelated from A
+
+  srcC = ctx.createBufferSource(); srcC.buffer=noiseBuf; srcC.loop=true;
+  srcC.connect(cIn); srcC.start(0, NOISE_SECONDS*0.67);
+
+  oscD = ctx.createOscillator(); oscD.type="sine";
+  oscD.frequency.value = +$("dFreq").value; oscD.connect(gD); oscD.start();
+
+  lfoD = ctx.createOscillator(); lfoD.type="sine"; lfoD.frequency.value=0.05;
+  lfoDdepth = ctx.createGain(); lfoDdepth.gain.value = $("dDrift").checked ? 35 : 0;
+  lfoD.connect(lfoDdepth).connect(oscD.detune); lfoD.start();
+
+  wLfo1.start(); wLfo2.start();
+}
+
+function stopSources(){
+  const t = ctx.currentTime + 0.25;
+  for (const nd of [srcA, srcB, srcC, oscD, lfoD, wLfo1, wLfo2]){
+    if (!nd) continue;
+    try { nd.stop(t); } catch(e){}
+    nd.onended = () => { try { nd.disconnect(); } catch(e){} };
+  }
+  srcA = srcB = srcC = oscD = lfoD = lfoDdepth = null;
+  // Wander LFOs are one-shot too — rebuild for the next run.
+  wLfo1 = ctx.createOscillator(); wLfo1.type="sine"; wLfo1.frequency.value=0.031; wLfo1.connect(wDepth1);
+  wLfo2 = ctx.createOscillator(); wLfo2.type="sine"; wLfo2.frequency.value=0.019; wLfo2.connect(wDepth2);
+}
+
+/* ---------------- Transport ---------------- */
+async function start(){
+  if (!ctx) buildGraph();
+  await ctx.resume();
+  startSources();
+  running = true; startedAt = Date.now();
+  applyAll();
+  const secs = +$("fadeIn").value, t = ctx.currentTime;
+  mEnv.gain.cancelScheduledValues(t);
+  mEnv.gain.setValueAtTime(0.0001, t);
+  if (secs <= 0) mEnv.gain.setValueAtTime(1, t + 0.05);
+  else mEnv.gain.exponentialRampToValueAtTime(1, t + secs);
+  scheduleAutoStop();
+  $("power").dataset.on="true"; $("power").setAttribute("aria-pressed","true");
+  $("power").innerHTML = '<span class="lamp"></span>Stop';
+  $("listen").disabled = false;
+  $("state").textContent = secs > 0 ? `Fading in over ${fmtMMSS(secs)}` : "Running";
+  draw();
+}
+
+function stop(){
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  mEnv.gain.cancelScheduledValues(t);
+  mEnv.gain.setTargetAtTime(0, t, 0.05);
+  setTimeout(stopSources, 250);
+  clearTimeout(autoStopTimer);
+  running = false;
+  $("power").dataset.on="false"; $("power").setAttribute("aria-pressed","false");
+  $("power").innerHTML = '<span class="lamp"></span>Start';
+  $("listen").disabled = true;
+  $("state").textContent = "Stopped";
+  $("drive").textContent = "";
+  document.body.classList.remove("dimmed");
+}
+
+function scheduleAutoStop(){
+  clearTimeout(autoStopTimer);
+  if (!$("autoStopOn").checked || !running) return;
+  const hrs = Math.min(14, Math.max(1, +$("autoStopHrs").value || 9));
+  autoStopTimer = setTimeout(() => {
+    if (!running) return;
+    mEnv.gain.setTargetAtTime(0.0001, ctx.currentTime, 60);   // 5-minute taper
+    $("state").textContent = "Tapering off";
+    setTimeout(stop, 5*60*1000);
+  }, hrs*3600*1000);
+}
+$("autoStopOn").addEventListener("change", scheduleAutoStop);
+$("autoStopHrs").addEventListener("change", scheduleAutoStop);
+
+/* Listen through: duck for four seconds so you can hear the room as it
+   really is, and avoid setting the masker higher than it needs to be. */
+let listenTimer = null;
+$("listen").addEventListener("click", () => {
+  if (!running) return;
+  clearTimeout(listenTimer);
+  const t = ctx.currentTime;
+  mEnv.gain.cancelScheduledValues(t);
+  mEnv.gain.setTargetAtTime(0.0001, t, 0.08);
+  $("state").textContent = "Listening through…";
+  listenTimer = setTimeout(() => {
+    if (!running) return;
+    mEnv.gain.setTargetAtTime(1, ctx.currentTime, 0.5);
+    $("state").textContent = "Running";
+  }, 4000);
+});
+
+/* ---------------- Parameters ---------------- */
+const ramp = (p, v, tc=FADE) => { if (ctx) p.setTargetAtTime(v, ctx.currentTime, tc); };
+
+function applyAll(){
+  if (!ctx) return;
+  const bLevel = fader(+$("bVol").value, 0.85);
+  ramp(mUser.gain, fader(+$("mVol").value, 1.0));
+  ramp(gA.gain, fader(+$("aVol").value, 0.85));
+  ramp(gB.gain, bLevel);
+  ramp(gC.gain, fader(+$("cVol").value, 0.85));
+  ramp(gD.gain, fader(+$("dVol").value, 0.22));
+  ramp(aLP.frequency, +$("aTop").value);
+  ramp(bPeak.frequency, +$("bFocus").value);
+  ramp(midPeak.gain, +$("midComp").value);
+  ramp(tiltShelf.gain, +$("tilt").value);
+  const hpF = +$("spk").value;
+  ramp(outHP1.frequency, hpF, 0.3); ramp(outHP2.frequency, hpF, 0.3);
+  setBandEdges(+$("cLo").value, +$("cHi").value);
+  if (oscD) ramp(oscD.frequency, +$("dFreq").value);
+  if (lfoDdepth) ramp(lfoDdepth.gain, $("dDrift").checked ? 35 : 0);
+  // Wander depth scales with what it modulates, so it stays proportional.
+  const w = $("wander").checked;
+  ramp(wDepth1.gain, w ? +$("bFocus").value * 0.22 : 0, 0.5);
+  ramp(wDepth2.gain, w ? bLevel * 0.16 : 0, 0.5);
+}
+
+const fmtMMSS = s => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
+
+function labels(){
+  $("mVolO").value=$("mVol").value; $("aVolO").value=$("aVol").value;
+  $("bVolO").value=$("bVol").value; $("cVolO").value=$("cVol").value;
+  $("dVolO").value=$("dVol").value;
+  $("aTopO").value=$("aTop").value+" Hz";
+  $("bFocusO").value=$("bFocus").value+" Hz";
+  $("cLoO").value=$("cLo").value+" Hz";
+  $("cHiO").value=$("cHi").value+" Hz";
+  $("dFreqO").value=$("dFreq").value+" Hz";
+  $("spkO").value = $("spk").value + " Hz";
+  $("midCompO").value = "+" + (+$("midComp").value).toFixed(1) + " dB";
+  const tv = +$("tilt").value;
+  $("tiltO").value = (tv<0?"−":"+") + Math.abs(tv).toFixed(1) + " dB";
+  $("fadeInO").value = +$("fadeIn").value===0 ? "off" : fmtMMSS(+$("fadeIn").value);
+}
+
+function clampBand(changed){
+  const lo=+$("cLo").value, hi=+$("cHi").value;
+  if (hi-lo < 1000){
+    if (changed==="lo") $("cHi").value = Math.min(18000, lo+1000);
+    else $("cLo").value = Math.max(2000, hi-1000);
+  }
+}
+
+const controls = ["mVol","midComp","tilt","fadeIn","aVol","aTop","bVol","bFocus","cVol","cLo","cHi","dVol","dFreq"];
+for (const id of controls){
+  $(id).addEventListener("input", () => {
+    if (id==="cLo" || id==="cHi") clampBand(id==="cLo"?"lo":"hi");
+    labels(); applyAll();
+  });
+}
+$("spk").addEventListener("change", () => { labels(); applyAll(); });
+$("wander").addEventListener("change", applyAll);
+$("dDrift").addEventListener("change", applyAll);
+$("power").addEventListener("click", () => running ? stop() : start());
+
+/* ---------------- Presets ----------------
+   Module layers only. Master volume is deliberately never touched, so a
+   preset can never suddenly get louder than what you already set. */
+const PRESETS = {
+  voices:{ aVol:34, aTop:600,  bVol:64, bFocus:650,  cVol:0,  dVol:0, tilt:-7 },
+  bass:  { aVol:64, aTop:1000, bVol:42, bFocus:450,  cVol:0,  dVol:0, tilt:-10 },
+  both:  { aVol:52, aTop:800,  bVol:60, bFocus:600,  cVol:0,  dVol:0, tilt:-8 },
+  whine: { aVol:24, aTop:400,  bVol:12, bFocus:1200, cVol:55, dVol:0, tilt:6, cLo:8000, cHi:15000 },
+  zero:  { aVol:0, bVol:0, cVol:0, dVol:0 }
+};
+for (const btn of document.querySelectorAll(".presets button")){
+  btn.addEventListener("click", () => {
+    const p = PRESETS[btn.dataset.preset];
+    for (const k in p) if ($(k)) $(k).value = p[k];
+    labels(); applyAll();
+    if (+$("mVol").value === 0) $("state").textContent = "Preset loaded — now raise the master";
+  });
+}
+
+/* ---------------- Adaptive level (microphone) ----------------
+   Raises the masker only while the neighbours are actually audible, so
+   exposure over a whole night is far lower than a fixed loud setting.
+   Ceiling is +5 dB with long time constants, which keeps the loop from
+   chasing its own output. Requires a secure context: works on
+   http://localhost, refused on a plain file:// page. Serve the folder
+   with `python3 -m http.server` if you want this. */
+async function enableAdaptive(){
+  try{
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+    });
+    if (!ctx) buildGraph();
+    const src = ctx.createMediaStreamSource(micStream);
+    micAnalyser = ctx.createAnalyser();
+    micAnalyser.fftSize = 2048; micAnalyser.smoothingTimeConstant = 0.6;
+    micData = new Uint8Array(micAnalyser.frequencyBinCount);
+    src.connect(micAnalyser);                       // analysis only, never to output
+    $("adaptState").textContent = "Listening to the room";
+    adaptTimer = setInterval(adaptTick, 400);
+  } catch(err){
+    $("adaptOn").checked = false;
+    $("adaptState").textContent = "Microphone unavailable — open the page over http://localhost";
+  }
+}
+function disableAdaptive(){
+  clearInterval(adaptTimer); adaptTimer = null;
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+  micStream = null; micAnalyser = null;
+  if (ctx) ramp(mAdapt.gain, 1, 3);
+  $("adaptState").textContent = "";
+}
+function adaptTick(){
+  if (!micAnalyser || !running) return;
+  micAnalyser.getByteFrequencyData(micData);
+  const binHz = ctx.sampleRate / micAnalyser.fftSize;
+  // Average over 200 Hz – 2 kHz: the only band that survives both the
+  // wall and the earplugs, so the only one worth reacting to.
+  let sum=0, n=0;
+  for (let i=Math.floor(200/binHz); i<Math.floor(2000/binHz); i++){ sum += micData[i]; n++; }
+  const level = sum/(n*255);
+  const over = Math.max(0, level - 0.14)/0.30;
+  const target = 1 + Math.min(1, over)*0.78;        // up to about +5 dB
+  ramp(mAdapt.gain, target, target > mAdapt.gain.value ? 4 : 20);  // rise slow, fall slower
+  $("adaptState").textContent = `Room ${Math.round(level*100)}% · trim +${(20*Math.log10(target)).toFixed(1)} dB`;
+}
+$("adaptOn").addEventListener("change", e => e.target.checked ? enableAdaptive() : disableAdaptive());
+
+/* ---------------- Spectrum + drive meter ---------------- */
+const cvs = $("viz"), g2d = cvs.getContext("2d");
+let frame = 0;
+const FMIN = 20, FMAX = 20000;
+const xOf = f => Math.log(f/FMIN)/Math.log(FMAX/FMIN);
+
+function sizeCanvas(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = cvs.clientWidth, h = cvs.clientHeight;
+  if (cvs.width !== w*dpr || cvs.height !== h*dpr){
+    cvs.width = w*dpr; cvs.height = h*dpr; g2d.setTransform(dpr,0,0,dpr,0,0);
+  }
+}
+window.addEventListener("resize", sizeCanvas);
+
+function draw(){
+  if (!running || !$("showScope").checked) return;
+  requestAnimationFrame(draw);
+  if ((frame++ & 1) === 1) return;                  // ~30 fps
+
+  sizeCanvas();
+  const w = cvs.clientWidth, h = cvs.clientHeight;
+  analyser.getByteFrequencyData(freqData);
+  const binHz = ctx.sampleRate / analyser.fftSize;
+  g2d.clearRect(0,0,w,h);
+
+  // Shade 200 Hz – 2 kHz: what survives the wall and the earplugs.
+  const sx1 = xOf(200)*w, sx2 = xOf(2000)*w;
+  g2d.fillStyle = "rgba(142,123,181,0.10)";
+  g2d.fillRect(sx1, 0, sx2-sx1, h);
+
+  g2d.strokeStyle = "rgba(255,255,255,0.045)"; g2d.lineWidth = 1;
+  for (const f of [100,1000,10000]){
+    const x = Math.round(xOf(f)*w)+0.5;
+    g2d.beginPath(); g2d.moveTo(x,0); g2d.lineTo(x,h); g2d.stroke();
+  }
+
+  g2d.beginPath(); g2d.moveTo(0,h);
+  for (let x=0; x<=w; x++){
+    const f = FMIN * Math.pow(FMAX/FMIN, x/w);
+    const bin = Math.min(freqData.length-1, Math.round(f/binHz));
+    g2d.lineTo(x, h - (freqData[bin]/255)*(h-8));
+  }
+  g2d.lineTo(w,h); g2d.closePath();
+  const grad = g2d.createLinearGradient(0,0,w,0);
+  grad.addColorStop(0, "rgba(109,128,160,0.55)");
+  grad.addColorStop(Math.min(0.999, xOf(600)),  "rgba(142,123,181,0.58)");
+  grad.addColorStop(Math.min(0.999, xOf(5000)), "rgba(79,179,166,0.42)");
+  grad.addColorStop(1, "rgba(79,179,166,0.28)");
+  g2d.fillStyle = grad; g2d.fill();
+
+  if (+$("dVol").value > 0){
+    const x = xOf(+$("dFreq").value)*w;
+    g2d.strokeStyle = "rgba(224,164,88,0.75)";
+    g2d.beginPath(); g2d.moveTo(x,0); g2d.lineTo(x,h); g2d.stroke();
+  }
+}
+$("showScope").addEventListener("change", e => {
+  $("scope").style.display = e.target.checked ? "" : "none";
+  if (e.target.checked && running) draw();
+});
+
+/* Drive meter: limiter gain reduction. Sustained reduction past a few dB
+   means the output is being pushed into distortion, which on a small
+   laptop driver sounds far worse than the noise you are masking. */
+setInterval(() => {
+  if (!running || !limiter){ return; }
+  const gr = -(limiter.reduction || 0);
+  const el = $("drive");
+  el.textContent = gr > 0.3 ? `drive −${gr.toFixed(1)} dB` : "drive ok";
+  el.classList.toggle("hot", gr > 4);
+}, 500);
+
+/* ---------------- Uptime + exposure nudge + night dim ---------------- */
+setInterval(() => {
+  if (!running){ $("uptime").textContent="00:00:00"; $("dose").textContent=""; return; }
+  const s = Math.floor((Date.now()-startedAt)/1000);
+  const p = n => String(n).padStart(2,"0");
+  $("uptime").textContent = `${p(Math.floor(s/3600))}:${p(Math.floor(s/60)%60)}:${p(s%60)}`;
+  // Not a calibrated SPL reading — just a nudge after a long loud stretch.
+  $("dose").textContent = (s > 4*3600 && +$("mVol").value > 75)
+    ? "high level, long run — try lowering it" : "";
+  if ($("state").textContent.startsWith("Fading") && s > +$("fadeIn").value)
+    $("state").textContent = "Running";
+}, 1000);
+
+let idleTimer = null;
+function poke(){
+  document.body.classList.remove("dimmed");
+  clearTimeout(idleTimer);
+  if (!$("autoDim").checked) return;
+  idleTimer = setTimeout(() => { if (running) document.body.classList.add("dimmed"); }, 90000);
+}
+["pointerdown","keydown","pointermove"].forEach(ev => window.addEventListener(ev, poke, {passive:true}));
+$("autoDim").addEventListener("change", poke);
+
+/* ---------------- Watchdog ----------------
+   Browsers and operating systems suspend audio contexts on sleep, on a
+   headphone swap, or under power saving. Check every 10 s and bring the
+   context back without touching the graph, so an overnight run survives
+   a lid close, a Bluetooth reconnect, or a power-state change. */
+setInterval(() => {
+  if (running && ctx && ctx.state !== "running"){
+    ctx.resume().then(() => { $("state").textContent = "Running (recovered)"; })
+                .catch(() => { $("state").textContent = "Suspended — press Stop, then Start"; });
+  }
+}, 10000);
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && running){
+    if (ctx && ctx.state !== "running") ctx.resume();
+    if ($("showScope").checked) draw();
+  }
+});
+window.addEventListener("beforeunload", () => { disableAdaptive(); if (ctx) ctx.close(); });
+
+labels(); sizeCanvas(); poke();
+</script>
+</body>
+</html>
