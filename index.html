@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>自動遮蔽 — Auto Masker</title>
+<title>自動遮蔽 · 監督版 — Auto Masker</title>
 <style>
   :root{
     --bg:#08090B; --panel:#101216; --panel-2:#15181D; --rule:#22262D;
     --text:#C8CDD4; --dim:#7A828D; --faint:#454C56;
-    --live:#4FB3A6; --warm:#8E7BB5; --warn:#C96A5A;
+    --live:#4FB3A6; --warm:#8E7BB5; --warn:#C96A5A; --ok:#5E9E6E;
     --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
     --sans: system-ui,-apple-system,"Segoe UI","PingFang TC","Noto Sans TC",sans-serif;
   }
@@ -16,47 +16,43 @@
   body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
        font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;
        display:flex;justify-content:center;padding:36px 18px 56px}
-  .app{width:100%;max-width:460px;transition:opacity 1s ease}
+  .app{width:100%;max-width:470px;transition:opacity 1s ease}
   body.dimmed .app{opacity:.1}
   @media (prefers-reduced-motion:reduce){.app{transition:none}}
 
-  h1{font-size:19px;font-weight:600;margin:0 0 4px;letter-spacing:.01em}
+  h1{font-size:19px;font-weight:600;margin:0 0 4px}
   .lede{color:var(--dim);font-size:13.5px;margin:0 0 30px}
 
-  /* ---- The dial: one button, one ring showing the measured room ---- */
-  .dial{position:relative;width:210px;height:210px;margin:0 auto 26px}
+  .dial{position:relative;width:210px;height:210px;margin:0 auto 24px}
   .dial svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg)}
   .track{fill:none;stroke:var(--rule);stroke-width:3}
   .arc{fill:none;stroke:var(--live);stroke-width:3;stroke-linecap:round;
-       transition:stroke-dashoffset .8s ease, stroke .8s ease}
+       transition:stroke-dashoffset .8s ease,stroke .8s ease}
   #big{position:absolute;inset:26px;border-radius:50%;background:var(--panel);
-       border:1px solid var(--rule);color:var(--text);font:inherit;font-size:16px;
-       font-weight:600;cursor:pointer;display:flex;flex-direction:column;
-       align-items:center;justify-content:center;gap:5px}
+       border:1px solid var(--rule);color:var(--text);font:inherit;font-size:16px;font-weight:600;
+       cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px}
   #big:hover{border-color:#39414c}
   #big[data-on="true"]{background:#12201D;border-color:#2E4F49}
   #big .pct{font-family:var(--mono);font-size:27px;font-weight:500;color:var(--live);letter-spacing:-.02em}
   #big .cap{font-size:12.5px;font-weight:400;color:var(--dim)}
 
-  .status{text-align:center;font-size:13.5px;color:var(--dim);min-height:44px;margin-bottom:26px}
+  .status{text-align:center;font-size:13.5px;color:var(--dim);min-height:46px;margin-bottom:24px}
   .status .detail{display:block;font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-top:3px}
 
-  /* ---- Strength: the only thing you normally touch ---- */
   .strength{display:flex;gap:8px;margin-bottom:14px}
   .strength button{flex:1;background:var(--panel);border:1px solid var(--rule);border-radius:8px;
     padding:11px 6px;font:inherit;font-size:14px;color:var(--dim);cursor:pointer}
   .strength button:hover{color:var(--text);border-color:#39414c}
   .strength button[aria-pressed="true"]{background:var(--panel-2);border-color:#4A4260;color:var(--text)}
   .strength small{display:block;font-size:11.5px;color:var(--faint);margin-top:2px}
+  .hint{font-size:12.5px;color:var(--faint);margin:0 0 22px;text-align:center}
 
-  .hint{font-size:12.5px;color:var(--faint);margin:0 0 24px;text-align:center}
-
-  /* ---- Advanced, folded away ---- */
-  details{background:var(--panel);border:1px solid var(--rule);border-radius:9px;padding:0 15px}
-  summary{cursor:pointer;padding:13px 0;font-size:13.5px;color:var(--dim);list-style:none}
+  details{background:var(--panel);border:1px solid var(--rule);border-radius:9px;padding:0 15px;margin-bottom:10px}
+  summary{cursor:pointer;padding:13px 0;font-size:13.5px;color:var(--dim);list-style:none;
+          display:flex;justify-content:space-between;align-items:center}
   summary::-webkit-details-marker{display:none}
-  summary::before{content:"▸ ";color:var(--faint)}
-  details[open] summary::before{content:"▾ "}
+  summary .tag{font-family:var(--mono);font-size:11.5px;color:var(--ok)}
+  summary .tag.bad{color:var(--warn)}
   details[open] summary{border-bottom:1px solid var(--rule);margin-bottom:12px}
   .adv{padding-bottom:14px}
   .row{display:grid;grid-template-columns:104px 1fr 62px;align-items:center;gap:11px;padding:6px 0}
@@ -76,7 +72,20 @@
     border-radius:5px;padding:3px 6px;width:52px;font-family:var(--mono);font-size:12.5px}
   .adv p{font-size:12px;color:var(--faint);margin:10px 0 0}
 
-  footer{margin-top:26px;font-size:12px;color:var(--faint);line-height:1.65}
+  /* health readout */
+  .vitals{display:grid;grid-template-columns:1fr 1fr;gap:7px 14px;font-family:var(--mono);font-size:12px;margin-bottom:12px}
+  .vitals div{display:flex;justify-content:space-between;border-bottom:1px solid #191D23;padding-bottom:4px}
+  .vitals span:first-child{color:var(--faint)}
+  .vitals span:last-child{color:var(--text)}
+  .vitals .bad span:last-child{color:var(--warn)}
+  #log{font-family:var(--mono);font-size:11px;color:var(--faint);max-height:150px;overflow-y:auto;
+       background:#0C0E11;border:1px solid var(--rule);border-radius:6px;padding:9px 10px;margin:0}
+  #log div{padding:1px 0;white-space:pre-wrap;word-break:break-word}
+  .testbtn{background:var(--panel-2);border:1px solid var(--rule);border-radius:6px;color:var(--dim);
+    padding:8px 13px;font:inherit;font-size:12.5px;cursor:pointer;margin-top:11px}
+  .testbtn:hover{color:var(--text);border-color:#39414c}
+
+  footer{margin-top:22px;font-size:12px;color:var(--faint);line-height:1.65}
   footer p{margin:0 0 7px}
   .warnbox{color:var(--warn)}
   :focus-visible{outline:2px solid var(--live);outline-offset:3px;border-radius:6px}
@@ -85,14 +94,13 @@
 <body>
 <main class="app">
 
-<h1>自動遮蔽</h1>
-<p class="lede">按一次就好。它每隔一段時間會靜音不到一秒去量房間,然後自己決定要多大聲。</p>
+<h1>自動遮蔽 · 監督版</h1>
+<p class="lede">按一次就好。背景有一層監督程序持續確認聲音真的在播,壞掉會自己修。</p>
 
 <div class="dial">
   <svg viewBox="0 0 210 210" aria-hidden="true">
     <circle class="track" cx="105" cy="105" r="101"></circle>
-    <circle class="arc" id="arc" cx="105" cy="105" r="101"
-            stroke-dasharray="634.6" stroke-dashoffset="634.6"></circle>
+    <circle class="arc" id="arc" cx="105" cy="105" r="101" stroke-dasharray="634.6" stroke-dashoffset="634.6"></circle>
   </svg>
   <button id="big" data-on="false" aria-pressed="false">
     <span class="pct" id="pct">—</span>
@@ -109,6 +117,16 @@
 </div>
 <p class="hint">先戴好耳塞再按開始。系統音量建議先壓到 30–40%。</p>
 
+<details id="healthPanel">
+  <summary>健康狀態 <span class="tag" id="healthTag">待機</span></summary>
+  <div class="adv">
+    <div class="vitals" id="vitals"></div>
+    <div id="log"><div>尚未啟動</div></div>
+    <button class="testbtn" id="testFail">模擬故障,驗證自動修復</button>
+    <p>先按一次模擬故障,看紀錄裡出現「已恢復」再放心過夜。修復次數偶爾 1–2 次是正常的(裝置切換、系統休眠);如果一晚超過十次,代表播放裝置本身不穩。</p>
+  </div>
+</details>
+
 <details>
   <summary>進階設定</summary>
   <div class="adv">
@@ -121,86 +139,108 @@
       </select>
       <output id="spkO">220 Hz</output>
     </div>
-    <div class="row">
-      <label for="ceil">音量上限</label>
-      <input type="range" id="ceil" min="10" max="100" value="55" step="5">
-      <output id="ceilO">55%</output>
-    </div>
-    <div class="row">
-      <label for="fadeIn">淡入時間</label>
-      <input type="range" id="fadeIn" min="0" max="300" value="90" step="15">
-      <output id="fadeInO">1:30</output>
-    </div>
+    <div class="row"><label for="ceil">音量上限</label><input type="range" id="ceil" min="10" max="100" value="55" step="5"><output id="ceilO">55%</output></div>
+    <div class="row"><label for="fadeIn">淡入時間</label><input type="range" id="fadeIn" min="0" max="300" value="90" step="15"><output id="fadeInO">1:30</output></div>
     <label class="opt"><input type="checkbox" id="autoStopOn"> 自動停止:<input type="number" id="autoStopHrs" min="1" max="14" value="9"> 小時後</label>
     <label class="opt"><input type="checkbox" id="autoDim" checked> 90 秒後畫面變暗</label>
-    <p>音量上限是硬性天花板,自動調節不會超過它。若量測期間的短暫靜音會吵到你,把淡入拉長沒有用——改用手動版本比較合適。</p>
+    <label class="opt"><input type="checkbox" id="guardClose" checked> 關閉分頁前提醒</label>
+    <p>音量上限是硬性天花板,自動調節不會超過。修復流程也不會超過——重建後音量從目前值接續,不會跳到最大。</p>
   </div>
 </details>
 
 <footer>
-  <p>需要麥克風權限才能自動調節。用 <span style="font-family:var(--mono)">file://</span> 直接開啟的話瀏覽器會拒絕,改用 GitHub Pages 的網址或本機 <span style="font-family:var(--mono)">http://localhost</span>。沒有麥克風時會退回固定音量模式,仍可使用。</p>
-  <p class="warnbox">隔天早上若耳朵有悶脹感或嗡嗡聲,當晚把強度降一級。那個訊號不要忽略。</p>
+  <p>需要麥克風權限才能自動調節,所以要用 HTTPS 網址(GitHub Pages)或 <span style="font-family:var(--mono)">http://localhost</span> 開啟。沒有麥克風時退回固定音量,監督層照常運作。</p>
+  <p class="warnbox">瀏覽器分頁終究不是為了連續運行好幾天而設計的。真的很在意的話,備一台便宜的實體白噪音機或舊手機當備援,不要把整夜的睡眠押在一個網頁上。</p>
 </footer>
 </main>
 
 <script>
 "use strict";
 /* =====================================================================
-   AUTO MASKER
+   AUTO MASKER — supervised build
    ---------------------------------------------------------------------
-   The whole idea: stop asking the user to set a level, and close the
-   loop with the microphone instead.
+   Same audio engine as before. What is new is a supervisor that assumes
+   every part of this will eventually fail while the user is asleep, and
+   makes each failure recoverable without them noticing.
 
-   The hard part is that the microphone hears the masker as well as the
-   neighbours, so a naive loop chases its own output and runs away. The
-   fix here is DUCK AND MEASURE:
+   Failure modes actually defended against:
 
-     1. sample the band while playing        → P_total (masker + room)
-     2. duck the output to near silence      → wait for it to settle
-     3. sample again                         → P_room  (room only)
-     4. restore
+   1. Context suspended (OS sleep, power saving, device switch)
+      → detected by ctx.state and by currentTime failing to advance.
+   2. Output silently dead while gains say it should not be
+      → an analyser taps the real output and measures RMS. Gains lying
+        about what is audible is the failure that a naive watchdog
+        misses entirely.
+   3. The measurement duck getting stuck at silence
+      → this is the one that bites. measureOnce() lowers the volume,
+        and if anything throws in between, the restore never runs and
+        the masker stays muted all night. Defended three ways: a
+        finally block, an independent hard-restore timer, and a
+        supervisor check that force-restores an un-ducked-but-quiet env.
+   4. The measurement loop dying from an unhandled rejection
+      → heartbeat timestamp; the supervisor restarts a stalled loop.
+   5. Microphone track ending (device change, permission revoked)
+      → track.onended plus periodic validity checks; falls back to a
+        fixed level rather than freezing at whatever gain it had.
+   6. Audio device changing under us
+      → devicechange listener triggers an output verification.
 
-   With both numbers in the same arbitrary microphone units:
-        P_masker ≈ P_total − P_room
-   and the target is simply P_masker = P_room × margin. That makes the
-   loop self-calibrating: neither the microphone's sensitivity nor the
-   speaker's efficiency needs to be known.
-
-   The duck lasts about 0.8 s and is a drop in level, not a rise, which
-   is far less likely to wake anyone. Once the correction settles the
-   interval stretches from 20 s to 60 s so it happens less often.
-
-   Masking band is 200 Hz – 2 kHz: a wall low-passes the noise, and
-   foam earplugs remove another 30–40 dB above 3 kHz, so that window is
-   the only place where masking energy does any work.
+   Recovery is a ladder, each rung with its own cooldown so a permanent
+   fault cannot spin:
+      L1 resume the context           (≥ 5 s apart)
+      L2 restart the source nodes     (≥ 30 s apart)
+      L3 rebuild the entire context   (≥ 120 s apart)
    ===================================================================== */
 
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const now = () => Date.now();
 
 const NOISE_SECONDS = 15;
 const BAND_LO = 200, BAND_HI = 2000;
+const MARGIN = { light:1, normal:5, strong:9 };
+const FIXED_LEVEL = { light:0.12, normal:0.22, strong:0.36 };
+const MIN_GAIN = 0.02;
 
-// Margin in dB by which the masker should sit above the room noise.
-const MARGIN = { light: 1, normal: 5, strong: 9 };
 let mode = "normal";
-
-let ctx=null, running=false, startedAt=0, autoStopTimer=null, loopToken=0;
+let ctx=null, running=false, loopToken=0;
 let noiseBuf=null, srcA=null, srcB=null, wLfo1=null, wLfo2=null, wDepth1=null, wDepth2=null;
 let gA=null, gB=null, autoGain=null, mEnv=null, ceilGain=null;
-let outHP1=null, outHP2=null, tilt=null, limiter=null;
+let outHP1=null, outHP2=null, tilt=null, limiter=null, outTap=null, outBuf=null;
 let brownIIR=null, aTrim=null, aLP=null;
 let pinkIIR=null, pinkTrim=null, bHP1=null, bHP2=null, bPeak=null, bShelf=null, bLP=null;
 let micStream=null, micAnalyser=null, micBuf=null, haveMic=false;
 
-let curGain = 0.06;             // adaptive amplitude, in the autoGain node
-let quietFloor = null;          // running estimate of the room's own noise floor
-let settled = 0;                // consecutive small corrections → slow the loop down
+let curGain = 0.06, quietFloor = null, settled = 0;
+let inMeasurement = false, unduckTimer = null;
+let fadeDoneAt = 0, silentSince = 0, lastCtxTime = -1, lastCtxCheck = 0;
+let autoStopTimer = null;
 
-const MIN_GAIN = 0.02;
 const maxGain = () => +$("ceil").value / 100;
 
-/* ---------------- Graph ---------------- */
+const health = {
+  startedAt:0, heartbeat:0, lastMeasure:0,
+  resumes:0, sourceRestarts:0, rebuilds:0,
+  lastRung:0, cooldown:{1:0, 2:0, 3:0},
+  outRms:0, mic:"—", log:[]
+};
+
+function logEvent(msg, bad){
+  const d = new Date(), p = n => String(n).padStart(2,"0");
+  health.log.unshift(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}  ${msg}`);
+  if (health.log.length > 60) health.log.length = 60;
+  const el = $("log");
+  el.innerHTML = "";
+  for (const line of health.log){
+    const div = document.createElement("div");
+    div.textContent = line;
+    if (/恢復|重建|重啟|失敗|停止/.test(line)) div.style.color = "var(--warn)";
+    el.appendChild(div);
+  }
+  if (bad) $("healthTag").classList.add("bad");
+}
+
+/* ================= Audio graph ================= */
 function makeNoiseBuffer(ac){
   const len = Math.floor(ac.sampleRate * NOISE_SECONDS);
   const buf = ac.createBuffer(2, len, ac.sampleRate);
@@ -215,41 +255,46 @@ function buildGraph(){
   ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint:"playback" });
   noiseBuf = makeNoiseBuffer(ctx);
 
-  autoGain = ctx.createGain(); autoGain.gain.value = 0;   // the adaptive control
-  mEnv     = ctx.createGain(); mEnv.gain.value = 0;       // fade-in and the measurement duck
+  autoGain = ctx.createGain(); autoGain.gain.value = 0;   // adaptive control
+  mEnv     = ctx.createGain(); mEnv.gain.value = 0;       // fade-in and measurement duck
   ceilGain = ctx.createGain(); ceilGain.gain.value = 1;
 
-  // Speaker protection: 24 dB/oct high-pass. Feeding a laptop driver
-  // 60 Hz produces excursion and distortion, not 60 Hz.
+  // Speaker protection: 24 dB/oct high-pass. A laptop driver fed 60 Hz
+  // produces excursion and distortion, not 60 Hz.
   const hp = +$("spk").value;
   outHP1 = ctx.createBiquadFilter(); outHP1.type="highpass"; outHP1.frequency.value=hp; outHP1.Q.value=0.7071;
   outHP2 = ctx.createBiquadFilter(); outHP2.type="highpass"; outHP2.frequency.value=hp; outHP2.Q.value=0.7071;
 
-  // Global darkening. Nothing above 3 kHz survives the earplugs, so
-  // energy up there is fatigue without benefit.
-  tilt = ctx.createBiquadFilter(); tilt.type="highshelf";
-  tilt.frequency.value = 3000; tilt.gain.value = -7;
+  // Nothing above 3 kHz survives foam earplugs, so energy up there is
+  // fatigue with no masking benefit. Shelve it down globally.
+  tilt = ctx.createBiquadFilter(); tilt.type="highshelf"; tilt.frequency.value=3000; tilt.gain.value=-7;
 
   limiter = ctx.createDynamicsCompressor();
   limiter.threshold.value=-6; limiter.knee.value=0; limiter.ratio.value=20;
   limiter.attack.value=0.003; limiter.release.value=0.25;
 
-  autoGain.connect(mEnv).connect(ceilGain).connect(outHP1).connect(outHP2)
-          .connect(tilt).connect(limiter).connect(ctx.destination);
+  // Output tap: the supervisor's ground truth. Gain values can claim the
+  // output is fine while nothing is actually reaching the speaker; this
+  // measures the real waveform after every other stage.
+  outTap = ctx.createAnalyser();
+  outTap.fftSize = 1024; outTap.smoothingTimeConstant = 0;
+  outBuf = new Float32Array(outTap.fftSize);
 
-  /* Layer 1 — brown noise. y[n] = 0.02·x[n] + 0.98·y[n−1] is a one-pole
-     integrator, the −6 dB/oct slope of brown noise. IIR state carries
-     across the buffer's loop point, so the loop is seamless. */
+  autoGain.connect(mEnv).connect(ceilGain).connect(outHP1).connect(outHP2)
+          .connect(tilt).connect(limiter).connect(outTap).connect(ctx.destination);
+
+  /* Layer 1 — brown noise. y[n] = 0.02·x[n] + 0.98·y[n−1]: a one-pole
+     integrator giving the −6 dB/oct slope. IIR state carries across the
+     noise buffer's loop point, so the loop has no seam. */
   brownIIR = ctx.createIIRFilter([0.02, 0], [1, -0.98]);
   aTrim = ctx.createGain(); aTrim.gain.value = 12;
   aLP = ctx.createBiquadFilter(); aLP.type="lowpass"; aLP.frequency.value=700; aLP.Q.value=0.7071;
-  gA = ctx.createGain(); gA.gain.value = 0.42;              // fixed blend, no slider
+  gA = ctx.createGain(); gA.gain.value = 0.42;
   brownIIR.connect(aTrim).connect(aLP).connect(gA).connect(autoGain);
 
   /* Layer 2 — speech-shaped noise: pink, high-passed at 180 Hz, a
      formant hump at the focus frequency, rolled off above 3.5 kHz.
-     The focus frequency is set automatically from the spectrum of the
-     noise measured during the duck window. */
+     Focus is steered automatically from the measured noise spectrum. */
   pinkIIR = ctx.createIIRFilter(
     [0.049922035, -0.095993537, 0.050612699, -0.004408786],
     [1, -2.494956002, 2.017265875, -0.522189400]
@@ -264,36 +309,45 @@ function buildGraph(){
   pinkIIR.connect(pinkTrim).connect(bHP1).connect(bHP2).connect(bPeak)
          .connect(bShelf).connect(bLP).connect(gB).connect(autoGain);
 
-  /* Two very slow LFOs at incommensurate rates keep the noise from
-     settling into a static hiss the ear learns to listen past. */
+  // Two slow LFOs at incommensurate rates keep the noise from settling
+  // into a static hiss the ear learns to listen past.
   wLfo1 = ctx.createOscillator(); wLfo1.type="sine"; wLfo1.frequency.value=0.031;
-  wDepth1 = ctx.createGain(); wDepth1.gain.value = 150;   // Hz, added to bPeak.frequency
+  wDepth1 = ctx.createGain(); wDepth1.gain.value = 150;
   wLfo1.connect(wDepth1).connect(bPeak.frequency);
   wLfo2 = ctx.createOscillator(); wLfo2.type="sine"; wLfo2.frequency.value=0.019;
-  wDepth2 = ctx.createGain(); wDepth2.gain.value = 0.14;  // added to gB.gain
+  wDepth2 = ctx.createGain(); wDepth2.gain.value = 0.14;
   wLfo2.connect(wDepth2).connect(gB.gain);
+
+  ctx.onstatechange = () => {
+    if (running && ctx.state !== "running") logEvent(`音訊狀態 → ${ctx.state}`, true);
+  };
 }
 
 function startSources(){
   srcA = ctx.createBufferSource(); srcA.buffer=noiseBuf; srcA.loop=true;
   srcA.connect(brownIIR); srcA.start(0, 0);
   srcB = ctx.createBufferSource(); srcB.buffer=noiseBuf; srcB.loop=true;
-  srcB.connect(pinkIIR); srcB.start(0, NOISE_SECONDS*0.4);   // decorrelated from A
-  wLfo1.start(); wLfo2.start();
+  srcB.connect(pinkIIR); srcB.start(0, NOISE_SECONDS*0.4);
+  try{ wLfo1.start(); wLfo2.start(); }catch(e){}
 }
+
 function stopSources(){
-  const t = ctx.currentTime + 0.25;
+  if (!ctx) return;
+  const t = ctx.currentTime + 0.2;
   for (const n of [srcA, srcB, wLfo1, wLfo2]){
     if (!n) continue;
     try{ n.stop(t); }catch(e){}
     n.onended = () => { try{ n.disconnect(); }catch(e){} };
   }
   srcA = srcB = null;
-  wLfo1 = ctx.createOscillator(); wLfo1.type="sine"; wLfo1.frequency.value=0.031; wLfo1.connect(wDepth1);
-  wLfo2 = ctx.createOscillator(); wLfo2.type="sine"; wLfo2.frequency.value=0.019; wLfo2.connect(wDepth2);
+  // The LFOs are one-shot too — replace them for the next run.
+  try{
+    wLfo1 = ctx.createOscillator(); wLfo1.type="sine"; wLfo1.frequency.value=0.031; wLfo1.connect(wDepth1);
+    wLfo2 = ctx.createOscillator(); wLfo2.type="sine"; wLfo2.frequency.value=0.019; wLfo2.connect(wDepth2);
+  }catch(e){}
 }
 
-/* ---------------- Microphone ---------------- */
+/* ================= Microphone ================= */
 async function initMic(){
   try{
     micStream = await navigator.mediaDevices.getUserMedia({
@@ -304,89 +358,217 @@ async function initMic(){
     micAnalyser.fftSize = 2048; micAnalyser.smoothingTimeConstant = 0.2;
     micBuf = new Float32Array(micAnalyser.frequencyBinCount);
     src.connect(micAnalyser);                    // analysis only, never to output
-    haveMic = true;
-  } catch(e){ haveMic = false; }
+    haveMic = true; health.mic = "正常";
+    for (const tr of micStream.getAudioTracks()){
+      tr.onended = () => { haveMic = false; health.mic = "中斷"; logEvent("麥克風中斷,改用固定音量", true); applyFixedLevel(); };
+    }
+  } catch(e){
+    haveMic = false; health.mic = "無法使用";
+  }
   return haveMic;
 }
+function micAlive(){
+  return haveMic && micStream && micStream.getAudioTracks().some(t => t.readyState === "live");
+}
 
-/* Sample band power over a window. Returns the peak of repeated reads so
-   speech peaks are caught rather than averaged away, plus the spectral
-   centroid used to steer the voice layer's focus frequency. */
+/* ================= Measurement ================= */
 async function sampleBand(ms){
   const binHz = ctx.sampleRate / micAnalyser.fftSize;
   const i0 = Math.max(1, Math.floor(BAND_LO/binHz)), i1 = Math.floor(BAND_HI/binHz);
-  let peak = 1e-12, cWeighted = 0, cTotal = 0;
+  let peak = 1e-12, cw = 0, ct = 0;
   const reads = Math.max(3, Math.round(ms/50));
-  for (let r=0; r<reads; r++){
+  for (let r=0;r<reads;r++){
     micAnalyser.getFloatFrequencyData(micBuf);
     let p = 0, wf = 0;
-    for (let i=i0; i<i1; i++){
+    for (let i=i0;i<i1;i++){
       const lin = Math.pow(10, micBuf[i]/10);    // dB → linear power
       p += lin; wf += lin * (i*binHz);
     }
-    if (p > peak){ peak = p; cWeighted = wf; cTotal = p; }
+    if (p > peak){ peak = p; cw = wf; ct = p; }
     await sleep(50);
   }
-  const centroid = cTotal > 0 ? cWeighted/cTotal : 700;
-  return { power: peak, centroid };
+  return { power: peak, centroid: ct > 0 ? cw/ct : 700 };
 }
 
-/* One measurement cycle. */
+function forceUnduck(reason){
+  inMeasurement = false;
+  clearTimeout(unduckTimer); unduckTimer = null;
+  if (!ctx || !running) return;
+  try{
+    mEnv.gain.cancelScheduledValues(ctx.currentTime);
+    mEnv.gain.setTargetAtTime(1, ctx.currentTime, 0.18);
+  }catch(e){}
+  if (reason) logEvent(`強制解除靜音(${reason})`, true);
+}
+
+/* One duck-and-measure cycle. The finally block plus the hard timer
+   guarantee the output comes back even if anything in here throws. */
 async function measureOnce(){
-  const before = await sampleBand(250);          // masker + room
+  if (!micAlive()) throw new Error("mic");
+  const before = await sampleBand(250);            // masker + room
 
-  // Duck. A drop is far less likely to wake you than a rise.
-  mEnv.gain.cancelScheduledValues(ctx.currentTime);
-  mEnv.gain.setTargetAtTime(0.012, ctx.currentTime, 0.05);
-  await sleep(320);                              // let it settle
-  const room = await sampleBand(420);            // room only
-  mEnv.gain.setTargetAtTime(1, ctx.currentTime, 0.18);
+  inMeasurement = true;
+  clearTimeout(unduckTimer);
+  unduckTimer = setTimeout(() => forceUnduck("量測逾時"), 2500);   // hard backstop
+  let room;
+  try{
+    mEnv.gain.cancelScheduledValues(ctx.currentTime);
+    mEnv.gain.setTargetAtTime(0.012, ctx.currentTime, 0.05);
+    await sleep(320);
+    room = await sampleBand(420);                  // room only
+  } finally {
+    forceUnduck();                                 // always restores
+  }
 
-  // Track the quietest room reading seen, with slow upward drift so the
-  // estimate can follow a genuinely noisier night.
   quietFloor = quietFloor === null ? room.power : Math.min(quietFloor*1.04, room.power);
-  const roomP = Math.max(room.power, quietFloor);
-
-  // Isolate the masker's own contribution, then aim for room × margin.
+  const roomP  = Math.max(room.power, quietFloor);
   const maskerP = Math.max(before.power - room.power, quietFloor*0.25);
   const wanted  = roomP * Math.pow(10, MARGIN[mode]/10);
-  let ratio = Math.sqrt(wanted / maskerP);       // power ratio → amplitude ratio
-  ratio = Math.min(1.25, Math.max(0.80, ratio)); // ±~2 dB per cycle, never a jump
+  let ratio = Math.sqrt(wanted / maskerP);         // power ratio → amplitude ratio
+  ratio = Math.min(1.25, Math.max(0.80, ratio));   // ±~2 dB per cycle, never a jump
 
   const prev = curGain;
   curGain = Math.min(maxGain(), Math.max(MIN_GAIN, curGain * ratio));
-  // Rise slowly, fall more slowly still — neither should be audible.
   autoGain.gain.setTargetAtTime(curGain, ctx.currentTime, curGain > prev ? 4 : 10);
 
-  // Steer the voice layer to where the intruding energy actually is.
   const focus = Math.min(1600, Math.max(320, room.centroid));
   bPeak.frequency.setTargetAtTime(focus, ctx.currentTime, 30);
 
-  const change = Math.abs(20*Math.log10(curGain/prev));
-  settled = change < 0.5 ? Math.min(4, settled+1) : 0;
-
-  const excess = 10*Math.log10(room.power / quietFloor);
-  render(curGain, excess, focus);
+  settled = Math.abs(20*Math.log10(curGain/prev)) < 0.5 ? Math.min(4, settled+1) : 0;
+  health.lastMeasure = now();
+  render(curGain, 10*Math.log10(room.power/quietFloor), focus);
 }
 
 async function measureLoop(token){
-  await sleep(Math.max(4000, +$("fadeIn").value*1000*0.6));
-  while (running && haveMic && token === loopToken){
-    try { await measureOnce(); } catch(e){ /* keep the audio running regardless */ }
-    // 20 s while it is still converging, 60 s once it has settled.
+  await sleep(Math.max(4000, +$("fadeIn").value*600));
+  while (running && token === loopToken){
+    health.heartbeat = now();
+    if (micAlive()){
+      try { await measureOnce(); }
+      catch(e){ logEvent("量測失敗,下輪重試"); forceUnduck(); }
+    } else if (haveMic){
+      haveMic = false; health.mic = "中斷"; applyFixedLevel();
+    }
     const period = settled >= 3 ? 60000 : 20000;
-    for (let t=0; t<period && running && token===loopToken; t+=1000) await sleep(1000);
+    for (let t=0; t<period && running && token===loopToken; t+=1000){
+      health.heartbeat = now();
+      await sleep(1000);
+    }
   }
 }
 
-/* ---------------- Render ---------------- */
+function applyFixedLevel(){
+  if (!ctx || !running) return;
+  curGain = Math.min(maxGain(), FIXED_LEVEL[mode]);
+  autoGain.gain.setTargetAtTime(curGain, ctx.currentTime, 3);
+  render(curGain);
+}
+
+/* ================= Supervisor =================
+   Runs every 2 s. Checks reality rather than intent, and escalates
+   through the recovery ladder only as far as it needs to. */
+async function supervise(){
+  if (!running || !ctx) return;
+
+  // 1 — is the context actually advancing?
+  const t = ctx.currentTime;
+  const stalled = (t === lastCtxTime) && (now() - lastCtxCheck > 4000);
+  lastCtxTime = t; lastCtxCheck = now();
+
+  // 2 — is real audio leaving the graph?
+  let rms = 0;
+  try{
+    outTap.getFloatTimeDomainData(outBuf);
+    let s = 0;
+    for (let i=0;i<outBuf.length;i++) s += outBuf[i]*outBuf[i];
+    rms = Math.sqrt(s/outBuf.length);
+  }catch(e){}
+  health.outRms = rms;
+
+  const shouldBeAudible = !inMeasurement && now() > fadeDoneAt && curGain > MIN_GAIN*1.2;
+  if (shouldBeAudible && rms < 1e-4){
+    if (!silentSince) silentSince = now();
+  } else silentSince = 0;
+
+  // 3 — duck stuck open?
+  if (!inMeasurement && now() > fadeDoneAt){
+    let env = 1;
+    try{ env = mEnv.gain.value; }catch(e){}
+    if (env < 0.5) forceUnduck("偵測到卡住");
+  }
+
+  // 4 — measurement loop stalled?
+  if (haveMic && health.heartbeat && now() - health.heartbeat > 90000){
+    logEvent("量測迴圈停擺,重新啟動", true);
+    measureLoop(++loopToken);
+  }
+
+  // Escalate
+  const dead = (ctx.state !== "running") || stalled || (silentSince && now()-silentSince > 6000);
+  if (dead) await recover(ctx.state !== "running" || stalled ? 1 : 2);
+
+  renderVitals();
+}
+
+async function recover(rung){
+  const n = now();
+  // Each rung has its own cooldown so a permanent fault cannot spin.
+  const cooldowns = {1:5000, 2:30000, 3:120000};
+  for (let r = rung; r <= 3; r++){
+    if (n - health.cooldown[r] < cooldowns[r]) continue;
+    health.cooldown[r] = n; health.lastRung = r;
+    try{
+      if (r === 1){
+        await ctx.resume();
+        health.resumes++; logEvent("L1 已恢復音訊內容");
+      } else if (r === 2){
+        stopSources(); await sleep(120); startSources();
+        autoGain.gain.setValueAtTime(curGain, ctx.currentTime);
+        mEnv.gain.setTargetAtTime(1, ctx.currentTime, 0.3);
+        health.sourceRestarts++; logEvent("L2 已重啟音源");
+      } else {
+        await fullRebuild();
+        health.rebuilds++; logEvent("L3 已重建整個音訊系統");
+      }
+    }catch(e){ logEvent(`L${r} 修復失敗:${e.name}`, true); continue; }
+    silentSince = 0;
+    return;
+  }
+}
+
+async function fullRebuild(){
+  const keep = curGain;
+  loopToken++;
+  try{ if (micStream) micStream.getAudioTracks().forEach(t => t.stop()); }catch(e){}
+  try{ await ctx.close(); }catch(e){}
+  micStream = null; micAnalyser = null; haveMic = false;
+  buildGraph();
+  await ctx.resume();
+  await initMic();
+  startSources();
+  curGain = Math.min(keep, maxGain());             // never jumps up after a rebuild
+  autoGain.gain.setValueAtTime(curGain, ctx.currentTime);
+  mEnv.gain.setValueAtTime(0.0001, ctx.currentTime);
+  mEnv.gain.exponentialRampToValueAtTime(1, ctx.currentTime + 2);   // brief, so it is not a jolt
+  fadeDoneAt = now() + 2500;
+  measureLoop(++loopToken);
+}
+
+setInterval(() => { supervise().catch(e => logEvent(`監督例外:${e.name}`, true)); }, 2000);
+
+navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+  if (!running) return;
+  logEvent("偵測到音訊裝置變更");
+  setTimeout(() => supervise().catch(()=>{}), 1500);
+});
+
+/* ================= Render ================= */
 const CIRC = 634.6;
 function render(gain, excessDb, focus){
   const pct = Math.round(gain/maxGain()*100);
   $("pct").textContent = pct + "%";
   $("arc").style.strokeDashoffset = CIRC * (1 - gain/maxGain());
   $("arc").style.stroke = pct > 88 ? "var(--warn)" : "var(--live)";
-
   if (!haveMic){
     $("status").firstChild.nodeValue = "固定音量模式(無麥克風)";
     $("detail").textContent = `強度 ${mode} · 上限 ${Math.round(maxGain()*100)}%`;
@@ -403,17 +585,45 @@ function render(gain, excessDb, focus){
     : `噪音 +${excessDb.toFixed(1)} dB · 重心 ${Math.round(focus)} Hz`;
 }
 
-/* ---------------- Transport ---------------- */
+function renderVitals(){
+  const up = health.startedAt ? Math.floor((now()-health.startedAt)/1000) : 0;
+  const p = n => String(n).padStart(2,"0");
+  const uptime = `${p(Math.floor(up/3600))}:${p(Math.floor(up/60)%60)}:${p(up%60)}`;
+  const sinceMeas = health.lastMeasure ? Math.round((now()-health.lastMeasure)/1000)+"s" : "—";
+  const totalFix = health.resumes + health.sourceRestarts + health.rebuilds;
+  const rows = [
+    ["連續運行", uptime],
+    ["音訊狀態", ctx ? ctx.state : "—"],
+    ["輸出訊號", health.outRms > 1e-4 ? "有聲" : (running && !inMeasurement ? "無聲" : "靜音中")],
+    ["麥克風", health.mic],
+    ["上次量測", sinceMeas],
+    ["修復次數", String(totalFix)],
+    ["內容恢復 / 音源 / 重建", `${health.resumes} / ${health.sourceRestarts} / ${health.rebuilds}`],
+    ["自動音量", Math.round(curGain*100)+"%"]
+  ];
+  $("vitals").innerHTML = rows.map(([k,v]) => {
+    const bad = (k==="輸出訊號" && v==="無聲") || (k==="麥克風" && v!=="正常" && v!=="—");
+    return `<div${bad?' class="bad"':''}><span>${k}</span><span>${v}</span></div>`;
+  }).join("");
+  const tag = $("healthTag");
+  if (!running){ tag.textContent = "待機"; tag.classList.remove("bad"); }
+  else if (health.outRms > 1e-4 || inMeasurement){ tag.textContent = totalFix ? `正常 · 修復 ${totalFix}` : "正常"; tag.classList.remove("bad"); }
+  else { tag.textContent = "檢查中"; tag.classList.add("bad"); }
+}
+setInterval(renderVitals, 2000);
+
+/* ================= Transport ================= */
 async function start(){
   if (!ctx) buildGraph();
   await ctx.resume();
-  if (!haveMic) await initMic();
+  if (!micAlive()) await initMic();
   startSources();
-  running = true; startedAt = Date.now();
-  settled = 0; quietFloor = null;
+  running = true;
+  health.startedAt = now(); health.heartbeat = now();
+  health.resumes = health.sourceRestarts = health.rebuilds = 0;
+  settled = 0; quietFloor = null; silentSince = 0;
 
-  curGain = haveMic ? 0.06 : ({light:0.12, normal:0.22, strong:0.36}[mode]);
-  curGain = Math.min(curGain, maxGain());
+  curGain = Math.min(maxGain(), haveMic ? 0.06 : FIXED_LEVEL[mode]);
   autoGain.gain.setValueAtTime(curGain, ctx.currentTime);
 
   const secs = +$("fadeIn").value, t = ctx.currentTime;
@@ -421,11 +631,12 @@ async function start(){
   mEnv.gain.setValueAtTime(0.0001, t);
   if (secs <= 0) mEnv.gain.setValueAtTime(1, t+0.05);
   else mEnv.gain.exponentialRampToValueAtTime(1, t+secs);
+  fadeDoneAt = now() + secs*1000 + 1500;
 
-  $("big").dataset.on = "true"; $("big").setAttribute("aria-pressed","true");
+  $("big").dataset.on="true"; $("big").setAttribute("aria-pressed","true");
   $("cap").textContent = "停止";
   render(curGain);
-  if (!haveMic) $("detail").textContent = "麥克風不可用,改用固定音量";
+  logEvent(haveMic ? "已啟動,自動調節中" : "已啟動,固定音量(無麥克風)");
   scheduleAutoStop();
   measureLoop(++loopToken);
 }
@@ -433,17 +644,22 @@ async function start(){
 function stop(){
   if (!ctx) return;
   loopToken++;
-  mEnv.gain.cancelScheduledValues(ctx.currentTime);
-  mEnv.gain.setTargetAtTime(0, ctx.currentTime, 0.06);
-  setTimeout(stopSources, 260);
+  clearTimeout(unduckTimer); inMeasurement = false;
+  try{
+    mEnv.gain.cancelScheduledValues(ctx.currentTime);
+    mEnv.gain.setTargetAtTime(0, ctx.currentTime, 0.06);
+  }catch(e){}
+  setTimeout(stopSources, 280);
   clearTimeout(autoStopTimer);
   running = false;
-  $("big").dataset.on = "false"; $("big").setAttribute("aria-pressed","false");
-  $("cap").textContent = "開始"; $("pct").textContent = "—";
+  $("big").dataset.on="false"; $("big").setAttribute("aria-pressed","false");
+  $("cap").textContent="開始"; $("pct").textContent="—";
   $("arc").style.strokeDashoffset = CIRC;
   $("status").firstChild.nodeValue = "已停止";
   $("detail").textContent = "";
+  logEvent("已停止");
   document.body.classList.remove("dimmed");
+  renderVitals();
 }
 $("big").addEventListener("click", () => running ? stop() : start());
 
@@ -453,27 +669,34 @@ function scheduleAutoStop(){
   const hrs = Math.min(14, Math.max(1, +$("autoStopHrs").value || 9));
   autoStopTimer = setTimeout(() => {
     if (!running) return;
-    loopToken++;                                  // stop measuring during the taper
-    mEnv.gain.setTargetAtTime(0.0001, ctx.currentTime, 60);   // 5-minute fade
+    loopToken++;                                   // stop measuring during the taper
+    mEnv.gain.setTargetAtTime(0.0001, ctx.currentTime, 60);
     $("status").firstChild.nodeValue = "正在漸弱停止";
+    logEvent("到時間,開始漸弱");
     setTimeout(stop, 5*60*1000);
   }, hrs*3600*1000);
 }
 $("autoStopOn").addEventListener("change", scheduleAutoStop);
 $("autoStopHrs").addEventListener("change", scheduleAutoStop);
 
-/* ---------------- Controls ---------------- */
+/* Fault injection, so the recovery path can be verified while awake
+   rather than discovered at 3 a.m. */
+$("testFail").addEventListener("click", async () => {
+  if (!running){ logEvent("請先按開始,再測試"); return; }
+  logEvent("── 模擬故障:強制暫停音訊 ──");
+  health.cooldown = {1:0, 2:0, 3:0};
+  try{ await ctx.suspend(); }catch(e){}
+  setTimeout(() => supervise().catch(()=>{}), 1200);
+});
+
+/* ================= Controls ================= */
 for (const b of document.querySelectorAll(".strength button")){
   b.addEventListener("click", () => {
     mode = b.dataset.m;
     for (const o of document.querySelectorAll(".strength button"))
       o.setAttribute("aria-pressed", String(o === b));
-    settled = 0;                                  // re-converge on the new target
-    if (running && !haveMic){
-      curGain = Math.min(maxGain(), {light:0.12, normal:0.22, strong:0.36}[mode]);
-      autoGain.gain.setTargetAtTime(curGain, ctx.currentTime, 3);
-      render(curGain);
-    }
+    settled = 0;
+    if (running && !haveMic) applyFixedLevel();
   });
 }
 $("spk").addEventListener("change", () => {
@@ -494,11 +717,11 @@ $("ceil").addEventListener("input", () => {
 });
 $("fadeIn").addEventListener("input", () => {
   const s = +$("fadeIn").value;
-  $("fadeInO").value = s === 0 ? "關閉" : `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
+  $("fadeInO").value = s===0 ? "關閉" : `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 });
 
-/* ---------------- Night dim ---------------- */
-let idleTimer=null;
+/* ================= Night dim ================= */
+let idleTimer = null;
 function poke(){
   document.body.classList.remove("dimmed");
   clearTimeout(idleTimer);
@@ -508,25 +731,19 @@ function poke(){
 ["pointerdown","keydown","pointermove"].forEach(e => window.addEventListener(e, poke, {passive:true}));
 $("autoDim").addEventListener("change", poke);
 
-/* ---------------- Watchdog ----------------
-   Operating systems suspend audio contexts on sleep, device changes, or
-   power saving. Check every 10 s and resume without touching the graph,
-   so an overnight run survives a lid close or a Bluetooth reconnect. */
-setInterval(() => {
-  if (running && ctx && ctx.state !== "running") ctx.resume().catch(()=>{});
-}, 10000);
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && running && ctx && ctx.state !== "running") ctx.resume();
+  if (!document.hidden && running) supervise().catch(()=>{});
 });
-window.addEventListener("beforeunload", () => {
-  if (micStream) micStream.getTracks().forEach(t => t.stop());
-  if (ctx) ctx.close();
+window.addEventListener("beforeunload", e => {
+  if (running && $("guardClose").checked){ e.preventDefault(); e.returnValue = ""; return ""; }
+  try{ if (micStream) micStream.getAudioTracks().forEach(t => t.stop()); }catch(err){}
+  try{ if (ctx) ctx.close(); }catch(err){}
 });
 
 $("spkO").value = $("spk").value + " Hz";
 $("ceilO").value = $("ceil").value + "%";
 $("fadeInO").value = "1:30";
-poke();
+renderVitals(); poke();
 </script>
 </body>
 </html>
