@@ -103,7 +103,7 @@
 <main class="app">
 
 <h1>自動遮蔽 · 多頻段版</h1>
-<p class="lede">按一次就好。四個頻段各自追蹤噪音,穩態聲音(風扇、冷氣)不會讓它無謂地推高音量。</p>
+<p class="lede">按一次就好。音量只會慢慢升、長時間維持、再以每分鐘 0.5 dB 慢慢滑回,不會有忽大忽小的溜溜球效應。</p>
 
 <div class="dial">
   <svg viewBox="0 0 210 210" aria-hidden="true">
@@ -119,6 +119,11 @@
 <div class="bands" id="bands" aria-label="各頻段補償量"></div>
 
 <div class="status" id="status"><span id="statusText">尚未啟動</span><span class="detail" id="detail"></span></div>
+
+<div class="strength" role="group" aria-label="睡眠模式" style="margin-bottom:9px">
+  <button data-v="1" aria-pressed="true">警覺型<small>慢升、久留、極慢降</small></button>
+  <button data-v="0" aria-pressed="false">一般<small>反應較快</small></button>
+</div>
 
 <div class="strength" role="group" aria-label="遮蔽強度">
   <button data-m="light"  aria-pressed="false">輕<small>淺眠、怕吵</small></button>
@@ -150,12 +155,12 @@
       <output id="spkO">220 Hz</output>
     </div>
     <div class="row"><label for="ceil">音量上限</label><input type="range" id="ceil" min="10" max="100" value="55" step="5"><output id="ceilO">55%</output></div>
-    <div class="row"><label for="fadeIn">淡入時間</label><input type="range" id="fadeIn" min="0" max="300" value="90" step="15"><output id="fadeInO">1:30</output></div>
+    <div class="row"><label for="fadeIn">淡入時間</label><input type="range" id="fadeIn" min="0" max="1800" value="900" step="30"><output id="fadeInO">15:00</output></div>
     <label class="opt"><input type="checkbox" id="statGate" checked> 忽略穩態噪音(風扇、冷氣)</label>
     <label class="opt"><input type="checkbox" id="autoStopOn"> 自動停止:<input type="number" id="autoStopHrs" min="1" max="14" value="9"> 小時後</label>
     <label class="opt"><input type="checkbox" id="autoDim" checked> 90 秒後畫面變暗</label>
     <label class="opt"><input type="checkbox" id="guardClose" checked> 關閉分頁前提醒</label>
-    <p>穩態偵測看的是能量包絡的起伏程度。人聲在 4–8 Hz 有強烈調變,風扇沒有,所以不需要模型也能分開。關掉這個選項會讓它對所有聲音一視同仁。</p>
+    <p>穩態偵測看的是能量包絡的起伏程度。人聲在 4–8 Hz 有強烈調變,風扇沒有,所以不需要模型也能分開。</p><p>警覺型模式下,量測不再切出靜音破口,改成緩慢降 12 dB 後用兩點聯立解出房間噪音,週期也拉長到 6 分鐘。</p>
   </div>
 </details>
 
@@ -215,11 +220,37 @@ const now = () => Date.now();
 const NOISE_SECONDS = 15;
 /* Four bands across the only window that survives both a wall and foam
    earplugs. Above ~2.4 kHz there is nothing left to mask. */
-const BANDS = [[200,400],[400,800],[800,1500],[1500,2400]];
+/* Four bands, shifted down from the earlier build. A wall low-passes
+   the noise and foam earplugs remove far more high than low, so the
+   residual that actually reaches the eardrum is 150–2000 Hz: footsteps,
+   muffled door thumps, and male speech through a wall.
+
+   Physical limit worth stating: a laptop driver cannot reproduce band 0
+   at all. The output high-pass sits at 220 Hz for laptop speakers, so
+   that band only does real work on an external speaker. */
+const BANDS = [[150,300],[300,600],[600,1100],[1100,2000]];
 const BAND_CENTER = BANDS.map(([a,b]) => Math.sqrt(a*b));
-const BAND_Q = 1.4;                        // ≈ one octave per filter
+const BAND_Q = 1.4;                        // ≈ one octave per filter; never modulated —
+                                           // moving Q mid-flight makes an audible resonance sweep
 const SPREAD_DB = -18;                     // upward spread, band → band above
-const SAMPLE_MS = 420;                     // identical for both halves of a cycle
+const SAMPLE_MS = 420;
+
+/* ---- Vigilant-sleeper timing ----
+   A level change is what wakes a light sleeper, so the level loop is
+   deliberately made slow and asymmetric: it may rise, then must hold,
+   then may only creep back down.
+   Band deviations are exempt — a change of timbre is far less alerting
+   than a change of loudness, so shape is allowed to move normally. */
+const DUCK_K = 0.25;                       // partial duck, −12 dB (vigilant)
+const VIG = {
+  hold: 15*60*1000,                        // minimum plateau after any rise
+  decayDbPerMin: 0.5,                      // "boiling frog" release
+  riseLimitDb: 1.5,                        // per measurement cycle
+  period: 6*60*1000                        // measure every 6 min, not every minute
+};
+const STD = { hold: 60*1000, decayDbPerMin: 6, riseLimitDb: 2, period: 60*1000 };
+let vigilant = true;
+const timing = () => vigilant ? VIG : STD;
 
 const MARGIN = { light:1, normal:5, strong:9 };
 const FIXED_LEVEL = { light:0.12, normal:0.22, strong:0.36 };
@@ -227,7 +258,7 @@ const MIN_GAIN = 0.02;
 
 let mode = "normal";
 let ctx=null, running=false, loopToken=0;
-let noiseBuf=null, srcA=null, srcB=null, wLfo1=null, wLfo2=null, wDepth1=null, wDepth2=null;
+let noiseBuf=null, srcA=null, srcB=null;
 let gA=null, gB=null, autoGain=null, mEnv=null;
 let outHP1=null, outHP2=null, tilt=null, limiter=null, outTap=null, outBuf=null;
 let brownIIR=null, aTrim=null, aLP=null;
@@ -236,6 +267,8 @@ let bandFilters = [];
 let micStream=null, micAnalyser=null, micBuf=null, haveMic=false;
 
 let curGain = 0.06, settled = 0;
+let levelDb = -24;                         // the level loop works in dB; curGain is derived
+let holdUntil = 0, wantDb = -60;           // plateau deadline, and where the room says it could sit
 let bandGainDb = [0,0,0,0];
 let inMeasurement = false, unduckTimer = null;
 let fadeDoneAt = 0, silentSince = 0, lastCtxTime = -1, lastCtxAdvance = 0;
@@ -355,14 +388,13 @@ function buildGraph(){
   for (const f of bandFilters) node = node.connect(f);
   node.connect(bShelf).connect(bLP).connect(gB).connect(autoGain);
 
-  // Two slow LFOs at incommensurate rates keep the noise from settling
-  // into a static hiss the ear learns to listen past.
-  wLfo1 = ctx.createOscillator(); wLfo1.type="sine"; wLfo1.frequency.value=0.031;
-  wDepth1 = ctx.createGain(); wDepth1.gain.value = 90;      // Hz, on the lowest band's centre
-  wLfo1.connect(wDepth1).connect(bandFilters[1].frequency);
-  wLfo2 = ctx.createOscillator(); wLfo2.type="sine"; wLfo2.frequency.value=0.019;
-  wDepth2 = ctx.createGain(); wDepth2.gain.value = 0.14;
-  wLfo2.connect(wDepth2).connect(gB.gain);
+  /* Texture modulation is a random walk, not an oscillator.
+     Two sine LFOs at incommensurate rates still produce two regular
+     oscillations, and a brain in a high-vigilance state locks onto a
+     regular pattern quickly — after which any break in the pattern is
+     itself an alerting event. An Ornstein-Uhlenbeck walk is mean-
+     reverting, so it stays bounded, but its trajectory is not
+     predictable from its own history. Driven from JS in walkTick(). */
 
   ctx.onstatechange = () => {
     if (running && ctx.state !== "running") logEvent(`音訊狀態 → ${ctx.state}`, true);
@@ -374,7 +406,6 @@ function startSources(){
   srcA.connect(brownIIR); srcA.start(0, 0);
   srcB = ctx.createBufferSource(); srcB.buffer=noiseBuf; srcB.loop=true;
   srcB.connect(pinkIIR); srcB.start(0, NOISE_SECONDS*0.4);   // decorrelated from A
-  try{ wLfo1.start(); wLfo2.start(); }catch(e){}
 }
 
 /* immediate = true during recovery: the old 200 ms tail would overlap
@@ -382,16 +413,12 @@ function startSources(){
 function stopSources(immediate){
   if (!ctx) return;
   const t = immediate ? ctx.currentTime : ctx.currentTime + 0.2;
-  for (const n of [srcA, srcB, wLfo1, wLfo2]){
+  for (const n of [srcA, srcB]){
     if (!n) continue;
     try{ n.stop(t); }catch(e){}
     n.onended = () => { try{ n.disconnect(); }catch(e){} };
   }
   srcA = srcB = null;
-  try{
-    wLfo1 = ctx.createOscillator(); wLfo1.type="sine"; wLfo1.frequency.value=0.031; wLfo1.connect(wDepth1);
-    wLfo2 = ctx.createOscillator(); wLfo2.type="sine"; wLfo2.frequency.value=0.019; wLfo2.connect(wDepth2);
-  }catch(e){}
 }
 
 /* ================= Microphone ================= */
@@ -471,6 +498,33 @@ function envelopeTick(){
 }
 setInterval(envelopeTick, 100);
 
+/* ---- Texture: bounded random walk ----
+   Ornstein-Uhlenbeck: dx = −θx·dt + σ·dW. The pull toward zero keeps it
+   inside a fixed range without ever turning it into a cycle, so there is
+   no period for the brain to latch onto. Applied with long time
+   constants so nothing moves fast enough to notice. */
+let walkF = 0, walkG = 0;
+function gauss(){                                   // Box–Muller
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v);
+}
+function walkTick(){
+  if (!running || !ctx || inMeasurement) return;
+  const theta = 0.06, dt = 1;
+  walkF += -theta*walkF*dt + 0.34*gauss()*Math.sqrt(dt);
+  walkG += -theta*walkG*dt + 0.30*gauss()*Math.sqrt(dt);
+  walkF = Math.max(-1, Math.min(1, walkF));
+  walkG = Math.max(-1, Math.min(1, walkG));
+  try{
+    // ±110 Hz on the second band's centre, ±12% on the voice layer's level
+    bandFilters[1].frequency.setTargetAtTime(BAND_CENTER[1] + walkF*110, ctx.currentTime, 5);
+    gB.gain.setTargetAtTime(1 + walkG*0.12, ctx.currentTime, 6);
+  }catch(e){}
+}
+setInterval(walkTick, 2000);
+
 /* ================= Measurement ================= */
 function forceUnduck(reason){
   inMeasurement = false;
@@ -485,23 +539,49 @@ function forceUnduck(reason){
 
 async function measureOnce(){
   if (!micAlive()) throw new Error("mic");
-  const before = await sampleBands(SAMPLE_MS);      // masker + room, per band
+  const P1 = await sampleBands(SAMPLE_MS);         // masker + room, at full level
 
+  /* PARTIAL DUCK.
+     The earlier build dropped to near-silence to hear the room. For a
+     light sleeper that gap is the most startling thing in the whole
+     system, and it happened up to two hundred times a night — which
+     makes it strictly worse than the gain changes everyone worries
+     about. Instead the level drops by a known factor k and stays there
+     briefly, giving two equations in two unknowns:
+
+        P1 = M + R
+        P2 = k²·M + R      →   R = (P2 − k²·P1) / (1 − k²)
+
+     Same room estimate, no hole in the sound. Ramps are 1.5 s each way
+     so even the −12 dB dip is a slow swell rather than an event. */
+  const k = vigilant ? DUCK_K : 0.012;
+  const k2 = k*k;
   inMeasurement = true;
   clearTimeout(unduckTimer);
-  unduckTimer = setTimeout(() => forceUnduck("量測逾時"), 2600);   // hard backstop
-  let room;
+  unduckTimer = setTimeout(() => forceUnduck("量測逾時"), 12000);   // hard backstop
+  let P2;
   try{
     mEnv.gain.cancelScheduledValues(ctx.currentTime);
-    mEnv.gain.setTargetAtTime(0.012, ctx.currentTime, 0.05);
-    await sleep(320);
-    room = await sampleBands(SAMPLE_MS);            // room only, per band
+    mEnv.gain.setTargetAtTime(k, ctx.currentTime, 0.5);
+    await sleep(2400);                             // let the slow ramp finish and settle
+    P2 = await sampleBands(SAMPLE_MS);
   } finally {
     forceUnduck();                                 // always restores
   }
 
+  // Solve per band, with guards: if the room got louder mid-cycle the
+  // solution can go negative, in which case that band is skipped.
+  const room = new Array(BANDS.length);
+  let usable = true;
+  for (let b=0; b<BANDS.length; b++){
+    const r = (P2[b] - k2*P1[b]) / (1 - k2);
+    if (!(r > 0) || r > P1[b]*1.5){ usable = false; break; }
+    room[b] = r;
+  }
+  if (!usable){ logEvent("量測結果不合理,略過本輪"); return; }
+
   floorHist.push(room);
-  if (floorHist.length > 30) floorHist.shift();    // ~20–30 min rolling window
+  if (floorHist.length > 20) floorHist.shift();
 
   /* A stationary room (fan, compressor) gets a reduced margin, so the
      system stops treating a harmless hum as something to shout over.
@@ -514,35 +594,71 @@ async function measureOnce(){
   for (let b=0; b<BANDS.length; b++){
     const fl = floorOf(b);
     const roomP = Math.max(room[b], fl);
-    maskerP[b] = Math.max(before[b] - room[b], fl*0.25);
-    // Upward spread: the band below already covers part of this one.
+    maskerP[b] = Math.max(P1[b] - room[b], fl*0.25);
     const spread = b > 0 ? maskerP[b-1] * Math.pow(10, SPREAD_DB/10) : 0;
     const need = Math.max(roomP * Math.pow(10, marginDb/10) - spread, fl*0.5);
     errDb[b] = 10*Math.log10(need / maskerP[b]);
   }
 
-  /* Decoupled loops: the mean error drives overall level, the residual
-     drives spectral shape. Letting both chase absolute level would make
-     them fight and oscillate. */
   const meanErr = errDb.reduce((a,b)=>a+b,0) / errDb.length;
-  const step = Math.min(2, Math.max(-2, meanErr));           // ±2 dB per cycle
-  const prev = curGain;
-  curGain = Math.min(maxGain(), Math.max(MIN_GAIN, curGain * Math.pow(10, step/20)));
-  autoGain.gain.setTargetAtTime(curGain, ctx.currentTime, curGain > prev ? 4 : 10);
 
+  /* SHAPE MOVES FREELY, LEVEL DOES NOT.
+     Band deviations track the room at normal speed: a change of timbre
+     is much less alerting than a change of loudness. The overall level
+     gets the asymmetric treatment below.
+
+     Worth being straight about the limit: when the room gets louder
+     across all four bands at once, the level has to rise — shaping only
+     helps when the increase is concentrated in some bands. */
   for (let b=0; b<BANDS.length; b++){
     const dev = Math.min(1.5, Math.max(-1.5, errDb[b] - meanErr));
-    bandGainDb[b] = Math.min(8, Math.max(-8, bandGainDb[b] + dev));
-    bandFilters[b].gain.setTargetAtTime(bandGainDb[b], ctx.currentTime, 6);
+    bandGainDb[b] = Math.min(10, Math.max(-10, bandGainDb[b] + dev));
+    bandFilters[b].gain.setTargetAtTime(bandGainDb[b], ctx.currentTime, 8);
   }
 
-  settled = Math.abs(20*Math.log10(curGain/prev)) < 0.5 ? Math.min(4, settled+1) : 0;
+  /* LEVEL: rise, then hold, then creep down.
+     Rising is rate-limited and starts a plateau that cannot be left for
+     the hold period. Falling never happens here — the slow decay ticker
+     owns it, at half a dB per minute, which is below the threshold at
+     which a sleeping listener notices a change. */
+  const T = timing();
+  wantDb = levelDb + meanErr;
+  if (meanErr > 0.2){
+    const rise = Math.min(T.riseLimitDb, meanErr);
+    levelDb = Math.min(dbCeiling(), levelDb + rise);
+    holdUntil = now() + T.hold;
+    applyLevel(4);
+  }
+
+  settled = Math.abs(meanErr) < 0.5 ? Math.min(4, settled+1) : 0;
   health.lastMeasure = now();
 
   const totalRoom = room.reduce((a,b)=>a+b,0);
   const totalFloor = BANDS.map((_,b)=>floorOf(b)).reduce((a,b)=>a+b,0);
   render(curGain, 10*Math.log10(totalRoom/totalFloor));
 }
+
+const dbCeiling = () => 20*Math.log10(maxGain());
+const dbFloor   = () => 20*Math.log10(MIN_GAIN);
+
+function applyLevel(tc){
+  levelDb = Math.min(dbCeiling(), Math.max(dbFloor(), levelDb));
+  curGain = Math.pow(10, levelDb/20);
+  try{ autoGain.gain.setTargetAtTime(curGain, ctx.currentTime, tc); }catch(e){}
+}
+
+/* The slow release. Runs once a minute; only ever moves downward, only
+   after the plateau has expired, and only by half a dB. Getting from a
+   loud night back to the floor deliberately takes half an hour. */
+setInterval(() => {
+  if (!running || !ctx || inMeasurement || tapering) return;
+  const T = timing();
+  if (now() < holdUntil) return;
+  if (levelDb <= wantDb + 0.3) return;
+  levelDb -= T.decayDbPerMin;
+  applyLevel(20);
+  render(curGain);
+}, 60000);
 
 async function measureLoop(token){
   await sleep(Math.max(4000, +$("fadeIn").value*600));
@@ -552,7 +668,7 @@ async function measureLoop(token){
       try { await measureOnce(); }
       catch(e){ logEvent("量測失敗,下輪重試"); forceUnduck(); }
     } else if (haveMic){ haveMic = false; health.mic = "中斷"; applyFixedLevel(); }
-    const period = settled >= 3 ? 60000 : 20000;
+    const period = settled >= 3 ? timing().period : Math.min(timing().period, 20000);
     for (let t=0; t<period && running && token===loopToken; t+=1000){
       health.heartbeat = now();
       await sleep(1000);
@@ -562,8 +678,9 @@ async function measureLoop(token){
 
 function applyFixedLevel(){
   if (!ctx || !running) return;
-  curGain = Math.min(maxGain(), FIXED_LEVEL[mode]);
-  autoGain.gain.setTargetAtTime(curGain, ctx.currentTime, 3);
+  levelDb = 20*Math.log10(Math.min(maxGain(), FIXED_LEVEL[mode]));
+  holdUntil = now() + timing().hold;
+  applyLevel(6);
   render(curGain);
 }
 
@@ -676,6 +793,7 @@ async function fullRebuild(){
   if (!running){ try{ await ctx.close(); }catch(e){} return; }
   startSources();
   curGain = Math.min(keep, maxGain());             // never jumps up after a rebuild
+  levelDb = 20*Math.log10(curGain);
   autoGain.gain.setValueAtTime(curGain, ctx.currentTime);
   mEnv.gain.setValueAtTime(0.0001, ctx.currentTime);
   mEnv.gain.exponentialRampToValueAtTime(1, ctx.currentTime + 2);
@@ -746,6 +864,9 @@ function renderVitals(){
     ["麥克風", health.mic],
     ["上次量測", health.lastMeasure ? Math.round((now()-health.lastMeasure)/1000)+"s" : "—"],
     ["語音度", Math.round(speechiness*100)+"%"],
+    ["音量狀態", !running ? "—" : (now() < holdUntil
+        ? "維持中 "+Math.ceil((holdUntil-now())/60000)+"m"
+        : (levelDb > wantDb + 0.3 ? "緩降中" : "穩定"))],
     ["修復次數", String(totalFix)],
     ["自動音量", Math.round(curGain*100)+"%"]
   ];
@@ -799,7 +920,10 @@ async function start(){
   bandGainDb = [0,0,0,0];
   for (let b=0; b<bandFilters.length; b++) bandFilters[b].gain.setValueAtTime(0, ctx.currentTime);
 
-  curGain = Math.min(maxGain(), haveMic ? 0.06 : FIXED_LEVEL[mode]);
+  levelDb = 20*Math.log10(Math.min(maxGain(), haveMic ? 0.06 : FIXED_LEVEL[mode]));
+  wantDb = levelDb; holdUntil = 0; walkF = walkG = 0;
+  levelDb = Math.min(dbCeiling(), Math.max(dbFloor(), levelDb));
+  curGain = Math.pow(10, levelDb/20);
   autoGain.gain.setValueAtTime(curGain, ctx.currentTime);
 
   const secs = +$("fadeIn").value, t = ctx.currentTime;
@@ -867,10 +991,20 @@ $("testFail").addEventListener("click", async () => {
 });
 
 /* ================= Controls ================= */
-for (const b of document.querySelectorAll(".strength button")){
+for (const b of document.querySelectorAll(".strength button[data-v]")){
+  b.addEventListener("click", () => {
+    vigilant = b.dataset.v === "1";
+    for (const o of document.querySelectorAll(".strength button[data-v]"))
+      o.setAttribute("aria-pressed", String(o === b));
+    settled = 0;
+    logEvent(vigilant ? "切換為警覺型(慢速)" : "切換為一般反應");
+  });
+}
+
+for (const b of document.querySelectorAll(".strength button[data-m]")){
   b.addEventListener("click", () => {
     mode = b.dataset.m;
-    for (const o of document.querySelectorAll(".strength button"))
+    for (const o of document.querySelectorAll(".strength button[data-m]"))
       o.setAttribute("aria-pressed", String(o === b));
     settled = 0;
     if (running && !haveMic) applyFixedLevel();
@@ -887,8 +1021,8 @@ $("spk").addEventListener("change", () => {
 $("ceil").addEventListener("input", () => {
   $("ceilO").value = $("ceil").value + "%";
   if (running){
-    curGain = Math.min(curGain, maxGain());
-    autoGain.gain.setTargetAtTime(curGain, ctx.currentTime, 2);
+    levelDb = Math.min(levelDb, dbCeiling());
+    applyLevel(2);
     render(curGain);
   }
 });
@@ -924,7 +1058,7 @@ setupMediaSession();
 
 $("spkO").value = $("spk").value + " Hz";
 $("ceilO").value = $("ceil").value + "%";
-$("fadeInO").value = "1:30";
+$("fadeInO").value = "15:00";
 renderBands(); renderVitals(); poke();
 </script>
 </body>
