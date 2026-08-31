@@ -97,9 +97,25 @@
   footer p{margin:0 0 7px}
   .warnbox{color:var(--warn)}
   :focus-visible{outline:2px solid var(--live);outline-offset:3px;border-radius:6px}
+
+  #tapveil{position:fixed;inset:0;z-index:50;background:#08090BF2;display:flex;
+           align-items:center;justify-content:center;text-align:center;cursor:pointer}
+  #tapveil[hidden]{display:none}
+  .tv-h{font-size:19px;font-weight:600;color:var(--text);margin:0 0 6px}
+  .tv-s{font-size:13px;color:var(--dim);margin:0}
+  .linkbtn{background:var(--panel-2);border:1px solid var(--rule);border-radius:6px;color:var(--dim);
+    padding:8px 13px;font:inherit;font-size:12.5px;cursor:pointer;margin-top:10px}
+  .linkbtn:hover{color:var(--text);border-color:#39414c}
 </style>
 </head>
 <body>
+<div id="tapveil" hidden>
+  <div>
+    <p class="tv-h">點畫面任一處開始</p>
+    <p class="tv-s">瀏覽器需要一次互動才能發聲</p>
+  </div>
+</div>
+
 <main class="app">
 
 <h1>自動遮蔽 · 多頻段版</h1>
@@ -138,6 +154,7 @@
     <div class="vitals" id="vitals"></div>
     <div id="log"><div>尚未啟動</div></div>
     <button class="testbtn" id="testFail">模擬故障,驗證自動修復</button>
+    <button class="linkbtn" id="copyLink">複製「我的設定」連結</button>
     <p>先按一次模擬故障,看紀錄裡出現「已恢復」再放心過夜。修復次數 0–2 是正常的;一晚超過十次代表播放裝置本身不穩。</p>
   </div>
 </details>
@@ -154,13 +171,25 @@
       </select>
       <output id="spkO">220 Hz</output>
     </div>
+    <div class="row">
+      <label for="sysVol">系統音量</label>
+      <select id="sysVol">
+        <option value="low" selected>30–40%(建議)</option>
+        <option value="mid">50–60%</option>
+        <option value="high">100%</option>
+      </select>
+      <output id="sysVolO">上限 55%</output>
+    </div>
+    <label class="opt"><input type="checkbox" id="autoStart" checked> 開啟網頁後自動開始</label>
+    <div class="row"><label for="pathComp">床底補償</label><input type="range" id="pathComp" min="0" max="12" value="0" step="0.5"><output id="pathCompO">0.0 dB</output></div>
     <div class="row"><label for="ceil">音量上限</label><input type="range" id="ceil" min="10" max="100" value="55" step="5"><output id="ceilO">55%</output></div>
     <div class="row"><label for="fadeIn">淡入時間</label><input type="range" id="fadeIn" min="0" max="1800" value="900" step="30"><output id="fadeInO">15:00</output></div>
     <label class="opt"><input type="checkbox" id="statGate" checked> 忽略穩態噪音(風扇、冷氣)</label>
     <label class="opt"><input type="checkbox" id="autoStopOn"> 自動停止:<input type="number" id="autoStopHrs" min="1" max="14" value="9"> 小時後</label>
     <label class="opt"><input type="checkbox" id="autoDim" checked> 90 秒後畫面變暗</label>
     <label class="opt"><input type="checkbox" id="guardClose" checked> 關閉分頁前提醒</label>
-    <p>穩態偵測看的是能量包絡的起伏程度。人聲在 4–8 Hz 有強烈調變,風扇沒有,所以不需要模型也能分開。</p><p>警覺型模式下,量測不再切出靜音破口,改成緩慢降 12 dB 後用兩點聯立解出房間噪音,週期也拉長到 6 分鐘。</p>
+    <p>穩態偵測看的是能量包絡的起伏程度。人聲在 4–8 Hz 有強烈調變,風扇沒有,所以不需要模型也能分開。</p><p>床底補償:麥克風跟喇叭一起在床底,你的耳朵在床上。床墊對遮蔽音的衰減遠大於對房間噪音的衰減,所以閉環會系統性低估你需要的音量——這是麥克風看不到的偏差。這個值會同時加進目標 margin 並提升 1.2 kHz 附近的中頻。用耳朵調,不要直接拉滿。</p>
+    <p>警覺型模式下,量測不再切出靜音破口,改成緩慢降 12 dB 後用兩點聯立解出房間噪音,週期也拉長到 6 分鐘。</p>
   </div>
 </details>
 
@@ -260,7 +289,7 @@ let mode = "normal";
 let ctx=null, running=false, loopToken=0;
 let noiseBuf=null, srcA=null, srcB=null;
 let gA=null, gB=null, autoGain=null, mEnv=null;
-let outHP1=null, outHP2=null, tilt=null, limiter=null, outTap=null, outBuf=null;
+let outHP1=null, outHP2=null, tilt=null, pathEQ=null, limiter=null, outTap=null, outBuf=null;
 let brownIIR=null, aTrim=null, aLP=null;
 let pinkIIR=null, pinkTrim=null, bHP1=null, bHP2=null, bShelf=null, bLP=null;
 let bandFilters = [];
@@ -288,7 +317,17 @@ let speechiness = 1;                       // 0 = stationary hum, 1 = speech-lik
 let supervising = false, superviseSince = 0;
 let tapering = false, lastMicRetry = 0;
 
-const maxGain = () => +$("ceil").value / 100;
+/* The app's ceiling is clamped by whatever the analogue volume is set
+   to. A software limit is the only thing between a sleeping listener
+   and full output once the system volume is at 100%, and software is
+   the part that can fail — so the higher the system volume, the tighter
+   this gets. */
+const SYS_CAP = { low: 1.00, mid: 0.60, high: 0.25 };
+const maxGain = () => {
+  const el = $("sysVol");
+  const cap = SYS_CAP[el ? el.value : "low"] ?? 1;
+  return Math.min(+$("ceil").value / 100, cap);
+};
 
 const health = {
   startedAt:0, heartbeat:0, lastMeasure:0,
@@ -340,6 +379,15 @@ function buildGraph(){
   // fatigue with no masking benefit.
   tilt = ctx.createBiquadFilter(); tilt.type="highshelf"; tilt.frequency.value=3000; tilt.gain.value=-7;
 
+  /* Compensates the speaker-to-ear path when the laptop is boxed in
+     under a bed. A mattress absorbs 500 Hz–4 kHz far more than it
+     absorbs bass, so the band doing the masking is exactly the band the
+     path eats. This is open-loop on purpose: the microphone sits with
+     the speaker, so the closed loop cannot see this loss at all. */
+  pathEQ = ctx.createBiquadFilter(); pathEQ.type="peaking";
+  pathEQ.frequency.value = 1200; pathEQ.Q.value = 0.8;
+  pathEQ.gain.value = +$("pathComp").value * 0.6;
+
   limiter = ctx.createDynamicsCompressor();
   limiter.threshold.value=-6; limiter.knee.value=0; limiter.ratio.value=20;
   limiter.attack.value=0.003; limiter.release.value=0.25;
@@ -351,7 +399,7 @@ function buildGraph(){
   outBuf = new Float32Array(outTap.fftSize);
 
   autoGain.connect(mEnv).connect(outHP1).connect(outHP2)
-          .connect(tilt).connect(limiter).connect(outTap).connect(ctx.destination);
+          .connect(tilt).connect(pathEQ).connect(limiter).connect(outTap).connect(ctx.destination);
 
   /* Layer 1 — brown noise. y[n] = 0.02·x[n] + 0.98·y[n−1]: a one-pole
      integrator giving the −6 dB/oct slope. IIR state carries across the
@@ -587,7 +635,7 @@ async function measureOnce(){
      system stops treating a harmless hum as something to shout over.
      Speech-like sound gets the full margin. */
   const gate = $("statGate").checked ? speechiness : 1;
-  const marginDb = MARGIN[mode] - 5*(1 - gate);
+  const marginDb = MARGIN[mode] - 5*(1 - gate) + (+$("pathComp").value);
 
   const errDb = new Array(BANDS.length).fill(0);
   const maskerP = new Array(BANDS.length).fill(0);
@@ -867,11 +915,14 @@ function renderVitals(){
     ["音量狀態", !running ? "—" : (now() < holdUntil
         ? "維持中 "+Math.ceil((holdUntil-now())/60000)+"m"
         : (levelDb > wantDb + 0.3 ? "緩降中" : "穩定"))],
+    ["推力", !running || !limiter ? "—"
+       : (-(limiter.reduction||0) > 4 ? "過載 "+(-(limiter.reduction)).toFixed(1)+"dB" : "正常")],
     ["修復次數", String(totalFix)],
     ["自動音量", Math.round(curGain*100)+"%"]
   ];
   $("vitals").innerHTML = rows.map(([k,v]) => {
-    const bad = (k==="輸出訊號" && v==="無聲") || (k==="麥克風" && v!=="正常" && v!=="—");
+    const bad = (k==="輸出訊號" && v==="無聲") || (k==="麥克風" && v!=="正常" && v!=="—")
+             || (k==="推力" && v.startsWith("過載"));
     return `<div${bad?' class="bad"':''}><span>${k}</span><span>${v}</span></div>`;
   }).join("");
   const tag = $("healthTag");
@@ -1026,6 +1077,11 @@ $("ceil").addEventListener("input", () => {
     render(curGain);
   }
 });
+$("pathComp").addEventListener("input", () => {
+  const v = +$("pathComp").value;
+  $("pathCompO").value = v.toFixed(1) + " dB";
+  if (ctx) pathEQ.gain.setTargetAtTime(v*0.6, ctx.currentTime, 1.5);
+});
 $("fadeIn").addEventListener("input", () => {
   const s = +$("fadeIn").value;
   $("fadeInO").value = s===0 ? "關閉" : `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
@@ -1056,10 +1112,110 @@ if ("serviceWorker" in navigator){
 }
 setupMediaSession();
 
-$("spkO").value = $("spk").value + " Hz";
-$("ceilO").value = $("ceil").value + "%";
-$("fadeInO").value = "15:00";
+/* ================= Settings in the URL =================
+   Persistence without any storage API: the current settings live in the
+   location hash, so bookmarking the page (or installing the PWA from a
+   tuned URL) is what remembers them. It also makes the configuration
+   visible and copyable instead of hidden in a browser profile. */
+const SETTING_IDS = ["spk","sysVol","pathComp","ceil","fadeIn","statGate",
+                     "autoStopOn","autoStopHrs","autoDim","guardClose","autoStart"];
+
+function writeHash(){
+  try{
+    const p = new URLSearchParams();
+    for (const id of SETTING_IDS){
+      const el = $(id);
+      p.set(id, el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value);
+    }
+    p.set("m", mode); p.set("v", vigilant ? "1" : "0");
+    history.replaceState(null, "", location.pathname + location.search + "#" + p.toString());
+  }catch(e){}
+}
+
+function readHash(){
+  try{
+    if (!location.hash || location.hash.length < 2) return;
+    const p = new URLSearchParams(location.hash.slice(1));
+    for (const id of SETTING_IDS){
+      if (!p.has(id)) continue;
+      const el = $(id), v = p.get(id);
+      if (el.type === "checkbox") el.checked = v === "1"; else el.value = v;
+    }
+    if (p.has("m")){
+      mode = p.get("m");
+      for (const o of document.querySelectorAll(".strength button[data-m]"))
+        o.setAttribute("aria-pressed", String(o.dataset.m === mode));
+    }
+    if (p.has("v")){
+      vigilant = p.get("v") === "1";
+      for (const o of document.querySelectorAll(".strength button[data-v]"))
+        o.setAttribute("aria-pressed", String((o.dataset.v === "1") === vigilant));
+    }
+  }catch(e){}
+}
+
+function refreshLabels(){
+  $("spkO").value = $("spk").value + " Hz";
+  $("ceilO").value = $("ceil").value + "%";
+  $("sysVolO").value = "上限 " + Math.round(maxGain()*100) + "%";
+  $("pathCompO").value = (+$("pathComp").value).toFixed(1) + " dB";
+  const fs = +$("fadeIn").value;
+  $("fadeInO").value = fs === 0 ? "關閉" : `${Math.floor(fs/60)}:${String(fs%60).padStart(2,"0")}`;
+}
+
+for (const id of SETTING_IDS){
+  $(id).addEventListener("change", () => { refreshLabels(); writeHash(); });
+  $(id).addEventListener("input",  () => { refreshLabels(); writeHash(); });
+}
+for (const b of document.querySelectorAll(".strength button")) b.addEventListener("click", writeHash);
+
+$("sysVol").addEventListener("change", () => {
+  if (running){ levelDb = Math.min(levelDb, dbCeiling()); applyLevel(2); render(curGain); }
+  logEvent("系統音量設定 → " + $("sysVol").selectedOptions[0].textContent);
+});
+
+$("copyLink").addEventListener("click", () => {
+  writeHash();
+  navigator.clipboard?.writeText(location.href)
+    .then(() => logEvent("設定連結已複製,把它加入書籤"))
+    .catch(() => logEvent("複製失敗,直接從網址列複製"));
+});
+
+/* ================= One-touch startup =================
+   Browsers will not let a page make sound without a user gesture. The
+   one exception that applies here: a page with an active microphone
+   capture is already treated as user-activated, so if the mic
+   permission was granted on a previous visit, this starts with no click
+   at all. If it is refused, the veil turns the whole screen into the
+   button rather than making you find a control in the dark. */
+function showVeil(){
+  const v = $("tapveil");
+  v.hidden = false;
+  const go = async () => {
+    v.hidden = true;
+    window.removeEventListener("pointerdown", go);
+    window.removeEventListener("keydown", go);
+    if (!running) await start();
+  };
+  window.addEventListener("pointerdown", go, { once:true });
+  window.addEventListener("keydown", go, { once:true });
+}
+
+async function autoStart(){
+  if (!$("autoStart").checked) return;
+  try{
+    if (!ctx) buildGraph();
+    await initMic();                    // an already-granted mic needs no gesture
+    await ctx.resume();
+    if (ctx.state === "running"){ await start(); return; }
+  }catch(e){}
+  showVeil();
+}
+
+readHash();
+refreshLabels();
 renderBands(); renderVitals(); poke();
+autoStart();
 </script>
 </body>
 </html>
