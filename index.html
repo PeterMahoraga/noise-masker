@@ -205,16 +205,29 @@ const MIN_GAIN = 0.02;
 let mode = "normal";
 let ctx=null, running=false, loopToken=0;
 let noiseBuf=null, srcA=null, srcB=null, wLfo1=null, wLfo2=null, wDepth1=null, wDepth2=null;
-let gA=null, gB=null, autoGain=null, mEnv=null, ceilGain=null;
+let gA=null, gB=null, autoGain=null, mEnv=null;
 let outHP1=null, outHP2=null, tilt=null, limiter=null, outTap=null, outBuf=null;
 let brownIIR=null, aTrim=null, aLP=null;
 let pinkIIR=null, pinkTrim=null, bHP1=null, bHP2=null, bPeak=null, bShelf=null, bLP=null;
 let micStream=null, micAnalyser=null, micBuf=null, haveMic=false;
 
-let curGain = 0.06, quietFloor = null, settled = 0;
+let curGain = 0.06, settled = 0;
 let inMeasurement = false, unduckTimer = null;
-let fadeDoneAt = 0, silentSince = 0, lastCtxTime = -1, lastCtxCheck = 0;
+let fadeDoneAt = 0, silentSince = 0, lastCtxTime = -1, lastCtxAdvance = 0;
 let autoStopTimer = null;
+
+/* Rolling minimum of the room's own noise, used as the quiet floor.
+   A single decaying value crept upward over a long noisy night and made
+   the loop mistake a loud room for a quiet one; a rolling minimum over
+   the last ~30 measurements cannot drift. */
+let floorHist = [];
+const quietFloorOf = () => floorHist.length ? Math.min.apply(null, floorHist) : null;
+
+/* Guards. Every one of these exists because the supervisor runs on a
+   timer and can otherwise re-enter work that is still in progress. */
+let supervising = false, superviseSince = 0;   // stops two recoveries at once
+let tapering = false;                          // stops the supervisor fighting the auto-stop fade
+let lastMicRetry = 0;                          // periodic re-acquisition after a mic drop
 
 const maxGain = () => +$("ceil").value / 100;
 
@@ -255,9 +268,10 @@ function buildGraph(){
   ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint:"playback" });
   noiseBuf = makeNoiseBuffer(ctx);
 
+  // The volume ceiling is enforced by clamping curGain, not by a node —
+  // one place to enforce it means one place to get it wrong.
   autoGain = ctx.createGain(); autoGain.gain.value = 0;   // adaptive control
   mEnv     = ctx.createGain(); mEnv.gain.value = 0;       // fade-in and measurement duck
-  ceilGain = ctx.createGain(); ceilGain.gain.value = 1;
 
   // Speaker protection: 24 dB/oct high-pass. A laptop driver fed 60 Hz
   // produces excursion and distortion, not 60 Hz.
@@ -280,7 +294,7 @@ function buildGraph(){
   outTap.fftSize = 1024; outTap.smoothingTimeConstant = 0;
   outBuf = new Float32Array(outTap.fftSize);
 
-  autoGain.connect(mEnv).connect(ceilGain).connect(outHP1).connect(outHP2)
+  autoGain.connect(mEnv).connect(outHP1).connect(outHP2)
           .connect(tilt).connect(limiter).connect(outTap).connect(ctx.destination);
 
   /* Layer 1 — brown noise. y[n] = 0.02·x[n] + 0.98·y[n−1]: a one-pole
@@ -331,9 +345,12 @@ function startSources(){
   try{ wLfo1.start(); wLfo2.start(); }catch(e){}
 }
 
-function stopSources(){
+/* immediate = true during recovery. The old 200 ms tail overlapped the
+   replacement sources and briefly doubled the level, which is exactly
+   the kind of jolt a recovery is supposed to avoid. */
+function stopSources(immediate){
   if (!ctx) return;
-  const t = ctx.currentTime + 0.2;
+  const t = immediate ? ctx.currentTime : ctx.currentTime + 0.2;
   for (const n of [srcA, srcB, wLfo1, wLfo2]){
     if (!n) continue;
     try{ n.stop(t); }catch(e){}
@@ -403,9 +420,16 @@ function forceUnduck(reason){
 
 /* One duck-and-measure cycle. The finally block plus the hard timer
    guarantee the output comes back even if anything in here throws. */
+const SAMPLE_MS = 420;   // identical for both halves — see below
+
 async function measureOnce(){
   if (!micAlive()) throw new Error("mic");
-  const before = await sampleBand(250);            // masker + room
+  /* Both samples must use the same window length. sampleBand takes the
+     peak of repeated reads, so a longer window finds a higher peak; the
+     earlier build sampled 250 ms with the masker on and 420 ms with it
+     off, which biased P_room up, biased P_masker down, and made the loop
+     creep the volume up all night for no acoustic reason. */
+  const before = await sampleBand(SAMPLE_MS);      // masker + room
 
   inMeasurement = true;
   clearTimeout(unduckTimer);
@@ -415,12 +439,14 @@ async function measureOnce(){
     mEnv.gain.cancelScheduledValues(ctx.currentTime);
     mEnv.gain.setTargetAtTime(0.012, ctx.currentTime, 0.05);
     await sleep(320);
-    room = await sampleBand(420);                  // room only
+    room = await sampleBand(SAMPLE_MS);            // room only
   } finally {
     forceUnduck();                                 // always restores
   }
 
-  quietFloor = quietFloor === null ? room.power : Math.min(quietFloor*1.04, room.power);
+  floorHist.push(room.power);
+  if (floorHist.length > 30) floorHist.shift();    // ~20–30 min rolling window
+  const quietFloor = quietFloorOf();
   const roomP  = Math.max(room.power, quietFloor);
   const maskerP = Math.max(before.power - room.power, quietFloor*0.25);
   const wanted  = roomP * Math.pow(10, MARGIN[mode]/10);
@@ -468,12 +494,43 @@ function applyFixedLevel(){
    Runs every 2 s. Checks reality rather than intent, and escalates
    through the recovery ladder only as far as it needs to. */
 async function supervise(){
+  /* Re-entrancy guard. A rebuild takes several seconds, and the timer
+     fires every two — without this, a slow recovery gets a second
+     recovery started on top of it, ending with two AudioContexts both
+     playing. The timeout release stops a hung await from disabling
+     supervision permanently. */
+  if (supervising){
+    if (now() - superviseSince < 30000) return;
+    logEvent("監督程序逾時,強制重置", true);
+  }
+  supervising = true; superviseSince = now();
+  try { await superviseBody(); }
+  finally { supervising = false; }
+}
+
+async function superviseBody(){
   if (!running || !ctx) return;
 
-  // 1 — is the context actually advancing?
+  // The auto-stop fade deliberately drives the output to silence over
+  // five minutes. Without this the supervisor sees a dying signal,
+  // calls it a fault, and fights the fade it was told to perform.
+  if (tapering){ renderVitals(); return; }
+
+  // Retry the microphone every 5 minutes after a drop, so a temporary
+  // device switch does not leave the night stuck on a fixed level.
+  if (!micAlive() && now() - lastMicRetry > 300000){
+    lastMicRetry = now();
+    if (await initMic()){ logEvent("麥克風已恢復,回到自動模式"); measureLoop(++loopToken); }
+  }
+
+  /* 1 — is the context clock actually advancing?
+     The previous version compared against a timestamp it overwrote on
+     every tick, so the elapsed value was always one interval (~2 s) and
+     the 4 s threshold could never be crossed. Only stamp the time when
+     the clock genuinely moves. */
   const t = ctx.currentTime;
-  const stalled = (t === lastCtxTime) && (now() - lastCtxCheck > 4000);
-  lastCtxTime = t; lastCtxCheck = now();
+  if (t !== lastCtxTime){ lastCtxTime = t; lastCtxAdvance = now(); }
+  const stalled = lastCtxAdvance > 0 && (now() - lastCtxAdvance > 5000);
 
   // 2 — is real audio leaving the graph?
   let rms = 0;
@@ -522,9 +579,20 @@ async function recover(rung){
         await ctx.resume();
         health.resumes++; logEvent("L1 已恢復音訊內容");
       } else if (r === 2){
-        stopSources(); await sleep(120); startSources();
+        await ctx.resume().catch(()=>{});          // a suspended context makes L2 pointless
+        stopSources(true); await sleep(120);
+        if (!running) return;                      // the user stopped mid-recovery
+        startSources();
         autoGain.gain.setValueAtTime(curGain, ctx.currentTime);
-        mEnv.gain.setTargetAtTime(1, ctx.currentTime, 0.3);
+        // If the start-up fade was still in progress, resume it instead of
+        // snapping to full volume in the middle of the night.
+        const left = (fadeDoneAt - now())/1000;
+        if (left > 1){
+          mEnv.gain.setValueAtTime(Math.max(0.0001, mEnv.gain.value), ctx.currentTime);
+          mEnv.gain.exponentialRampToValueAtTime(1, ctx.currentTime + left);
+        } else {
+          mEnv.gain.setTargetAtTime(1, ctx.currentTime, 0.3);
+        }
         health.sourceRestarts++; logEvent("L2 已重啟音源");
       } else {
         await fullRebuild();
@@ -545,6 +613,10 @@ async function fullRebuild(){
   buildGraph();
   await ctx.resume();
   await initMic();
+  /* A rebuild spans several awaits, and the user can press stop inside
+     that window. Without this check the rebuild would happily finish and
+     start playing again on a context that is supposed to be off. */
+  if (!running){ try{ await ctx.close(); }catch(e){} return; }
   startSources();
   curGain = Math.min(keep, maxGain());             // never jumps up after a rebuild
   autoGain.gain.setValueAtTime(curGain, ctx.currentTime);
@@ -621,7 +693,8 @@ async function start(){
   running = true;
   health.startedAt = now(); health.heartbeat = now();
   health.resumes = health.sourceRestarts = health.rebuilds = 0;
-  settled = 0; quietFloor = null; silentSince = 0;
+  settled = 0; floorHist = []; silentSince = 0;
+  tapering = false; lastCtxTime = -1; lastCtxAdvance = 0; lastMicRetry = 0;
 
   curGain = Math.min(maxGain(), haveMic ? 0.06 : FIXED_LEVEL[mode]);
   autoGain.gain.setValueAtTime(curGain, ctx.currentTime);
@@ -644,7 +717,7 @@ async function start(){
 function stop(){
   if (!ctx) return;
   loopToken++;
-  clearTimeout(unduckTimer); inMeasurement = false;
+  clearTimeout(unduckTimer); inMeasurement = false; tapering = false;
   try{
     mEnv.gain.cancelScheduledValues(ctx.currentTime);
     mEnv.gain.setTargetAtTime(0, ctx.currentTime, 0.06);
@@ -670,6 +743,7 @@ function scheduleAutoStop(){
   autoStopTimer = setTimeout(() => {
     if (!running) return;
     loopToken++;                                   // stop measuring during the taper
+    tapering = true;                               // and tell the supervisor this silence is intentional
     mEnv.gain.setTargetAtTime(0.0001, ctx.currentTime, 60);
     $("status").firstChild.nodeValue = "正在漸弱停止";
     logEvent("到時間,開始漸弱");
