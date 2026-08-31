@@ -270,7 +270,9 @@ const SAMPLE_MS = 420;
    then may only creep back down.
    Band deviations are exempt — a change of timbre is far less alerting
    than a change of loudness, so shape is allowed to move normally. */
-const DUCK_K = 0.25;                       // partial duck, −12 dB (vigilant)
+let duckK = 0.25;                          // partial duck depth, adapted at runtime
+const DUCK_MIN = { vig: 0.06, std: 0.012 };// −24 dB / −38 dB floors
+const DUCK_MAX = 0.25;                     // −12 dB, the gentlest useful dip
 const VIG = {
   hold: 15*60*1000,                        // minimum plateau after any rise
   decayDbPerMin: 0.5,                      // "boiling frog" release
@@ -552,6 +554,8 @@ setInterval(envelopeTick, 100);
    no period for the brain to latch onto. Applied with long time
    constants so nothing moves fast enough to notice. */
 let walkF = 0, walkG = 0;
+let lastExcess;                            // remembered so a render() with no
+                                           // argument cannot wipe the status line
 function gauss(){                                   // Box–Muller
   let u = 0, v = 0;
   while (u === 0) u = Math.random();
@@ -602,7 +606,7 @@ async function measureOnce(){
 
      Same room estimate, no hole in the sound. Ramps are 1.5 s each way
      so even the −12 dB dip is a slow swell rather than an event. */
-  const k = vigilant ? DUCK_K : 0.012;
+  const k = vigilant ? duckK : DUCK_MIN.std;
   const k2 = k*k;
   inMeasurement = true;
   clearTimeout(unduckTimer);
@@ -617,16 +621,31 @@ async function measureOnce(){
     forceUnduck();                                 // always restores
   }
 
-  // Solve per band, with guards: if the room got louder mid-cycle the
-  // solution can go negative, in which case that band is skipped.
+  /* Solving R = (P2 − k²·P1)/(1 − k²) subtracts two nearly equal numbers
+     whenever the masker dominates at the microphone — which it always
+     does here, since the mic sits beside the speaker under the bed while
+     the noise comes from across the room. Tiny peak-hold jitter then
+     flips R negative.
+
+     Two defences. First, never bail out: a rejected cycle used to leave
+     the level frozen at its starting value forever, which is a far worse
+     failure than a slightly wrong estimate, so R is floored instead.
+     Second, adapt the duck depth — if the solve is ill-conditioned, dip
+     deeper next time; if it is comfortable, ease back toward the gentlest
+     dip that still works. */
   const room = new Array(BANDS.length);
-  let usable = true;
+  let worstRatio = 1;
   for (let b=0; b<BANDS.length; b++){
-    const r = (P2[b] - k2*P1[b]) / (1 - k2);
-    if (!(r > 0) || r > P1[b]*1.5){ usable = false; break; }
-    room[b] = r;
+    const raw = (P2[b] - k2*P1[b]) / (1 - k2);
+    const floored = Math.max(raw, P1[b]*0.005);     // −23 dB below total, conservative
+    room[b] = Math.min(floored, P1[b]);             // the room alone cannot exceed the sum
+    worstRatio = Math.min(worstRatio, raw / P1[b]);
   }
-  if (!usable){ logEvent("量測結果不合理,略過本輪"); return; }
+  if (vigilant){
+    const lo = DUCK_MIN.vig;
+    if (worstRatio < 0.03) duckK = Math.max(lo, duckK*0.45);       // ill-conditioned → dip deeper
+    else if (worstRatio > 0.15) duckK = Math.min(DUCK_MAX, duckK*1.25);
+  }
 
   floorHist.push(room);
   if (floorHist.length > 20) floorHist.shift();
@@ -860,6 +879,7 @@ navigator.mediaDevices?.addEventListener?.("devicechange", () => {
 /* ================= Render ================= */
 const CIRC = 634.6;
 function render(gain, excessDb){
+  if (excessDb === undefined) excessDb = lastExcess; else lastExcess = excessDb;
   const pct = Math.round(gain/maxGain()*100);
   $("pct").textContent = pct + "%";
   $("arc").style.strokeDashoffset = CIRC * (1 - gain/maxGain());
@@ -915,6 +935,7 @@ function renderVitals(){
     ["音量狀態", !running ? "—" : (now() < holdUntil
         ? "維持中 "+Math.ceil((holdUntil-now())/60000)+"m"
         : (levelDb > wantDb + 0.3 ? "緩降中" : "穩定"))],
+    ["量測衰減", running && vigilant ? (20*Math.log10(duckK)).toFixed(0)+" dB" : "—"],
     ["推力", !running || !limiter ? "—"
        : (-(limiter.reduction||0) > 4 ? "過載 "+(-(limiter.reduction)).toFixed(1)+"dB" : "正常")],
     ["修復次數", String(totalFix)],
@@ -969,6 +990,7 @@ async function start(){
   settled = 0; floorHist = []; envHist = []; speechiness = 1; silentSince = 0;
   tapering = false; lastCtxTime = -1; lastCtxAdvance = 0; lastMicRetry = 0;
   bandGainDb = [0,0,0,0];
+  duckK = DUCK_MAX; lastExcess = undefined;
   for (let b=0; b<bandFilters.length; b++) bandFilters[b].gain.setValueAtTime(0, ctx.currentTime);
 
   levelDb = 20*Math.log10(Math.min(maxGain(), haveMic ? 0.06 : FIXED_LEVEL[mode]));
