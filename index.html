@@ -147,6 +147,7 @@
   <button data-m="strong" aria-pressed="false">強<small>隔壁很吵</small></button>
 </div>
 <p class="hint">先戴好耳塞再按開始。系統音量建議先壓到 30–40%。</p>
+<p class="hint" style="color:var(--warn)">筆電放床底時,進風口必須完全淨空。風扇轉速明顯拉高或機身燙手就立刻停用——那是散熱問題,不是程式能修的。</p>
 
 <details id="healthPanel">
   <summary>健康狀態 <span class="tag" id="healthTag">待機</span></summary>
@@ -184,7 +185,8 @@
     <div class="row"><label for="pathComp">床底補償</label><input type="range" id="pathComp" min="0" max="12" value="0" step="0.5"><output id="pathCompO">0.0 dB</output></div>
     <div class="row"><label for="ceil">音量上限</label><input type="range" id="ceil" min="10" max="100" value="55" step="5"><output id="ceilO">55%</output></div>
     <div class="row"><label for="fadeIn">淡入時間</label><input type="range" id="fadeIn" min="0" max="1800" value="900" step="30"><output id="fadeInO">15:00</output></div>
-    <label class="opt"><input type="checkbox" id="statGate" checked> 忽略穩態噪音(風扇、冷氣)</label>
+    <label class="opt"><input type="checkbox" id="lowPower" checked> 低耗電模式(關閉持續麥克風分析)</label>
+    <label class="opt"><input type="checkbox" id="statGate"> 忽略穩態噪音(風扇、冷氣)</label>
     <label class="opt"><input type="checkbox" id="autoStopOn"> 自動停止:<input type="number" id="autoStopHrs" min="1" max="14" value="9"> 小時後</label>
     <label class="opt"><input type="checkbox" id="autoDim" checked> 90 秒後畫面變暗</label>
     <label class="opt"><input type="checkbox" id="guardClose" checked> 關閉分頁前提醒</label>
@@ -246,7 +248,7 @@ const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const now = () => Date.now();
 
-const NOISE_SECONDS = 15;
+const NOISE_SECONDS = 8;   // 8 s ≈ 3 MB; 15 s was 5.5 MB per rebuild
 /* Four bands across the only window that survives both a wall and foam
    earplugs. Above ~2.4 kHz there is nothing left to mask. */
 /* Four bands, shifted down from the earlier build. A wall low-passes
@@ -341,13 +343,12 @@ function logEvent(msg, bad){
   const d = new Date(), p = n => String(n).padStart(2,"0");
   health.log.unshift(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}  ${msg}`);
   if (health.log.length > 60) health.log.length = 60;
-  const el = $("log"); el.innerHTML = "";
-  for (const line of health.log){
-    const div = document.createElement("div");
-    div.textContent = line;
-    if (/恢復|重建|重啟|失敗|停止|中斷/.test(line)) div.style.color = "var(--warn)";
-    el.appendChild(div);
-  }
+  const el = $("log");
+  const div = document.createElement("div");
+  div.textContent = health.log[0];
+  if (/恢復|重建|重啟|失敗|停止|中斷|過載/.test(health.log[0])) div.style.color = "var(--warn)";
+  el.insertBefore(div, el.firstChild);
+  while (el.childNodes.length > 60) el.removeChild(el.lastChild);
   if (bad) $("healthTag").classList.add("bad");
 }
 
@@ -529,7 +530,13 @@ async function sampleBands(ms){
    steady, so any swing in the envelope comes from the room. Speech
    swings at the syllable rate; a compressor or fan does not. */
 function envelopeTick(){
+  /* This is the app's single largest continuous main-thread cost: an FFT
+     read plus arithmetic several times a second, all night. It only
+     earns that cost if the stationary-noise gate is actually in use, so
+     it is skipped entirely otherwise. */
   if (!running || !micAlive() || inMeasurement) return;
+  if ($("lowPower").checked || !$("statGate").checked) return;
+  if (document.hidden) return;
   try{
     const p = readBands();
     const mid = 10*Math.log10(p[1] + p[2]);         // 400–1500 Hz, where speech lives
@@ -546,7 +553,7 @@ function envelopeTick(){
     }
   }catch(e){}
 }
-setInterval(envelopeTick, 100);
+setInterval(envelopeTick, 250);   // 4 Hz is enough for a 4–8 Hz syllable rate trend
 
 /* ---- Texture: bounded random walk ----
    Ornstein-Uhlenbeck: dx = −θx·dt + σ·dW. The pull toward zero keeps it
@@ -564,22 +571,29 @@ function gauss(){                                   // Box–Muller
 }
 function walkTick(){
   if (!running || !ctx || inMeasurement) return;
-  const theta = 0.06, dt = 1;
+  const theta = 0.14, dt = 1;   // retuned for the slower tick
   walkF += -theta*walkF*dt + 0.34*gauss()*Math.sqrt(dt);
   walkG += -theta*walkG*dt + 0.30*gauss()*Math.sqrt(dt);
   walkF = Math.max(-1, Math.min(1, walkF));
   walkG = Math.max(-1, Math.min(1, walkG));
   try{
-    // ±110 Hz on the second band's centre, ±12% on the voice layer's level
-    bandFilters[1].frequency.setTargetAtTime(BAND_CENTER[1] + walkF*110, ctx.currentTime, 5);
-    gB.gain.setTargetAtTime(1 + walkG*0.12, ctx.currentTime, 6);
+    // Clearing first keeps the AudioParam event list from growing all
+    // night — thousands of queued setTargetAtTime events are work the
+    // audio thread repeats on every render quantum.
+    const t = ctx.currentTime;
+    bandFilters[1].frequency.cancelScheduledValues(t);
+    gB.gain.cancelScheduledValues(t);
+    bandFilters[1].frequency.setTargetAtTime(BAND_CENTER[1] + walkF*110, t, 6);
+    gB.gain.setTargetAtTime(1 + walkG*0.12, t, 7);
   }catch(e){}
 }
-setInterval(walkTick, 2000);
+setInterval(walkTick, 5000);
 
 /* ================= Measurement ================= */
+let unduckingUntil = 0;
 function forceUnduck(reason){
   inMeasurement = false;
+  unduckingUntil = now() + 2000;      // the ramp back up needs a moment
   clearTimeout(unduckTimer); unduckTimer = null;
   if (!ctx || !running) return;
   try{
@@ -797,7 +811,7 @@ async function superviseBody(){
   else silentSince = 0;
 
   // 3 — duck stuck open?
-  if (!inMeasurement && now() > fadeDoneAt){
+  if (!inMeasurement && now() > fadeDoneAt && now() > unduckingUntil){
     let env = 1;
     try{ env = mEnv.gain.value; }catch(e){}
     if (env < 0.5) forceUnduck("偵測到卡住");
@@ -837,6 +851,16 @@ async function recover(rung){
         } else mEnv.gain.setTargetAtTime(1, ctx.currentTime, 0.3);
         health.sourceRestarts++; logEvent("L2 已重啟音源");
       } else {
+        /* Every rebuild allocates a fresh AudioContext and noise buffer.
+           Browsers cap how many contexts can exist at once, so a rebuild
+           that keeps failing must not be allowed to run all night — it
+           would end in exactly the resource exhaustion it was trying to
+           recover from. */
+        if (health.rebuilds >= 4){
+          logEvent("重建已達 4 次上限,停止以保護系統", true);
+          stop();
+          return;
+        }
         await fullRebuild();
         health.rebuilds++; logEvent("L3 已重建整個音訊系統");
       }
@@ -868,7 +892,12 @@ async function fullRebuild(){
   measureLoop(++loopToken);
 }
 
-setInterval(() => { supervise().catch(e => logEvent(`監督例外:${e.name}`, true)); }, 2000);
+/* Supervision and the vitals readout share one timer at 4 s instead of
+   two at 2 s. Four seconds is still well inside the 6 s silence window
+   the fault detector uses. */
+setInterval(() => {
+  supervise().catch(e => logEvent(`監督例外:${e.name}`, true));
+}, 4000);
 
 navigator.mediaDevices?.addEventListener?.("devicechange", () => {
   if (!running) return;
@@ -921,6 +950,9 @@ function renderBands(){
 }
 
 function renderVitals(){
+  // The panel is collapsed by default and the screen is often off; there
+  // is no reason to rebuild this table into a hidden container.
+  if (document.hidden || !$("healthPanel").open) return;
   const up = health.startedAt ? Math.floor((now()-health.startedAt)/1000) : 0;
   const p = n => String(n).padStart(2,"0");
   const uptime = `${p(Math.floor(up/3600))}:${p(Math.floor(up/60)%60)}:${p(up%60)}`;
@@ -952,7 +984,7 @@ function renderVitals(){
     tag.textContent = totalFix ? `正常 · 修復 ${totalFix}` : "正常"; tag.classList.remove("bad");
   } else { tag.textContent = "檢查中"; tag.classList.add("bad"); }
 }
-setInterval(renderVitals, 2000);
+
 
 /* ================= Media Session =================
    Lets the OS media controls and the keyboard media keys drive this, so
@@ -979,7 +1011,18 @@ function mediaHookPlay(on){
 }
 
 /* ================= Transport ================= */
+let starting = false;
 async function start(){
+  /* start() has several awaits before it sets running = true, and the
+     tap-to-begin veil listens on window while the button listens on
+     itself — one physical click could enter here twice and leave two
+     sets of source nodes playing forever. */
+  if (starting || running) return;
+  starting = true;
+  try{ await doStart(); } finally { starting = false; }
+}
+
+async function doStart(){
   if (!ctx) buildGraph();
   await ctx.resume();
   if (!micAlive()) await initMic();
